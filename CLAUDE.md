@@ -1,8 +1,8 @@
 # photo-editor — instrucciones del proyecto
 
 App local que sustituye Lightroom/Photoshop para el flujo del usuario (cribar →
-puntuar → revelar ARW → apilar astro → exportar). Plan por fases: F0 cimientos,
-F1 cribado, F2 revelado, F3 MCP+jobs, F4 astro, F5 extras.
+puntuar → revelar ARW → apilar astro → exportar). Plan por fases: F0 cimientos ✔,
+F1 cribado ✔, F2 revelado (siguiente), F3 MCP+jobs, F4 astro, F5 extras.
 
 ## Arquitectura
 
