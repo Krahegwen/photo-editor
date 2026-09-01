@@ -1,0 +1,21 @@
+/* Paleta heredada de _revisar.html, la UI de revisión del flujo previo */
+:root {
+  --bg: #12141a;
+  --panel: #1b1e26;
+  --panel2: #232733;
+  --line: #2f3542;
+  --txt: #e8eaf0;
+  --dim: #9aa2b4;
+  --acc: #e0a341;
+  --ok: #2f9e5e;
+  --no: #c0392b;
+}
+* { box-sizing: border-box; }
+html, body, #app { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--txt);
+  font: 14px/1.45 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; }
