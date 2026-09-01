@@ -2,7 +2,12 @@
 
 App local que sustituye Lightroom/Photoshop para el flujo del usuario (cribar →
 puntuar → revelar ARW → apilar astro → exportar). Plan por fases: F0 cimientos ✔,
-F1 cribado ✔, F2 revelado (siguiente), F3 MCP+jobs, F4 astro, F5 extras.
+F1 cribado ✔, F2 revelado ✔, F3 MCP+jobs (siguiente), F4 astro, F5 extras.
+
+Notas F2: receta JSON en sidecar `<stem>.pe.json` (compartida por stem);
+pipeline en `develop.py` con curvas heurísticas v1 — se afinan con feedback
+de Diego, no son las de Adobe. Exportación en `export.py` con los presets de
+su política de archivo; nunca sobreescribe sin force.
 
 ## Arquitectura
 
