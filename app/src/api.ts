@@ -52,6 +52,8 @@ export const api = {
       escala: opts.escala ?? 'auto',
       force: opts.force ?? false,
     }),
+  timelapse: (photoIds: number[], fps = 24, force = false) =>
+    post<Job>('/api/timelapse', { photo_ids: photoIds, fps, force }),
   closeFolder: (folderId: number, execute = false) =>
     post<{ report: CloseReport; job: Job | null }>('/api/close_folder', {
       folder_id: folderId,

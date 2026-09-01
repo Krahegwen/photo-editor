@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref, toRaw, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, toRaw, watch } from 'vue'
 import { api } from '../api'
 import type { CropBox, ExportResult, Hist, Photo, PresetKey, Recipe } from '../types'
 
@@ -8,7 +8,8 @@ const emit = defineEmits<{ close: []; copy: [recipe: Recipe] }>()
 
 const NEUTRAL: Recipe = {
   temp: 0, tint: 0, exposure: 0, contrast: 0, highlights: 0, shadows: 0,
-  blacks: 0, saturation: 0, vibrance: 0, sharpen: 0, rot90: 0, angle: 0, crop: null,
+  blacks: 0, saturation: 0, vibrance: 0, sharpen: 0, rot90: 0, angle: 0,
+  crop: null, curve: null,
 }
 
 const SLIDERS = [
@@ -53,6 +54,8 @@ const dispRect = ref<{ left: number; top: number; w: number; h: number } | null>
 const natural = ref<{ w: number; h: number }>({ w: 3, h: 2 })
 
 const histCanvas = ref<HTMLCanvasElement | null>(null)
+const curveCanvas = ref<HTMLCanvasElement | null>(null)
+let dragIdx = -1
 
 const exportPreset = ref<PresetKey>('normal')
 const exporting = ref<string | null>(null)
@@ -60,6 +63,7 @@ const exporting = ref<string | null>(null)
 function plainRecipe(): Recipe {
   const r = { ...toRaw(recipe) }
   r.crop = recipe.crop ? { ...recipe.crop } : null
+  r.curve = recipe.curve ? recipe.curve.map((p) => [p[0], p[1]] as [number, number]) : null
   return r
 }
 
@@ -154,6 +158,173 @@ watch(hist, (h) => {
     ctx.fillRect(i * bw, H - bh, Math.max(1, bw - 0.5), bh)
   })
 })
+
+// ------------------------------------------------------------- curva
+
+function curveLut(pts: [number, number][], samples = 120): [number, number][] {
+  const xs = pts.map((p) => p[0])
+  const ys = pts.map((p) => p[1])
+  const n = xs.length
+  if (n < 2) return pts
+  const d: number[] = []
+  for (let i = 0; i < n - 1; i++) d.push((ys[i + 1] - ys[i]) / Math.max(1e-6, xs[i + 1] - xs[i]))
+  const m: number[] = [d[0]]
+  for (let i = 1; i < n - 1; i++) m.push(d[i - 1] * d[i] <= 0 ? 0 : (d[i - 1] + d[i]) / 2)
+  m.push(d[n - 2])
+  for (let i = 0; i < n - 1; i++) {
+    if (d[i] === 0) {
+      m[i] = 0
+      m[i + 1] = 0
+    } else {
+      const a = m[i] / d[i]
+      const b = m[i + 1] / d[i]
+      const s = a * a + b * b
+      if (s > 9) {
+        const t = 3 / Math.sqrt(s)
+        m[i] = t * a * d[i]
+        m[i + 1] = t * b * d[i]
+      }
+    }
+  }
+  const out: [number, number][] = []
+  for (let s = 0; s <= samples; s++) {
+    const x = s / samples
+    let i = 0
+    while (i < n - 2 && x > xs[i + 1]) i++
+    const h = Math.max(1e-6, xs[i + 1] - xs[i])
+    const t = (x - xs[i]) / h
+    const y =
+      ys[i] * (2 * t ** 3 - 3 * t ** 2 + 1) +
+      m[i] * h * (t ** 3 - 2 * t ** 2 + t) +
+      ys[i + 1] * (-2 * t ** 3 + 3 * t ** 2) +
+      m[i + 1] * h * (t ** 3 - t ** 2)
+    out.push([x, Math.min(1, Math.max(0, y))])
+  }
+  return out
+}
+
+function drawCurve() {
+  const cv = curveCanvas.value
+  const c = recipe.curve
+  if (!cv || !c) return
+  const ctx = cv.getContext('2d')!
+  const W = cv.width
+  const H = cv.height
+  ctx.clearRect(0, 0, W, H)
+  if (hist.value) {
+    ctx.fillStyle = 'rgba(154,162,180,.16)'
+    const bw = W / hist.value.luma.length
+    hist.value.luma.forEach((v, i) => {
+      const bh = v * (H - 6)
+      ctx.fillRect(i * bw, H - bh, Math.max(1, bw - 0.5), bh)
+    })
+  }
+  ctx.strokeStyle = 'rgba(47,53,66,.9)'
+  ctx.lineWidth = 1
+  for (let i = 1; i < 4; i++) {
+    ctx.beginPath(); ctx.moveTo((W * i) / 4, 0); ctx.lineTo((W * i) / 4, H); ctx.stroke()
+    ctx.beginPath(); ctx.moveTo(0, (H * i) / 4); ctx.lineTo(W, (H * i) / 4); ctx.stroke()
+  }
+  ctx.setLineDash([4, 4])
+  ctx.beginPath(); ctx.moveTo(0, H); ctx.lineTo(W, 0); ctx.stroke()
+  ctx.setLineDash([])
+  const sorted = [...c].sort((a, b) => a[0] - b[0])
+  ctx.strokeStyle = '#e0a341'
+  ctx.lineWidth = 2
+  ctx.beginPath()
+  curveLut(sorted).forEach(([x, y], i) => {
+    const px = x * W
+    const py = (1 - y) * H
+    if (i) ctx.lineTo(px, py)
+    else ctx.moveTo(px, py)
+  })
+  ctx.stroke()
+  c.forEach(([x, y], i) => {
+    ctx.fillStyle = i === dragIdx ? '#e8eaf0' : '#e0a341'
+    ctx.beginPath()
+    ctx.arc(x * W, (1 - y) * H, 5, 0, 7)
+    ctx.fill()
+  })
+}
+
+function cpos(e: PointerEvent): [number, number] {
+  const r = (curveCanvas.value as HTMLCanvasElement).getBoundingClientRect()
+  return [
+    Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)),
+    Math.min(1, Math.max(0, 1 - (e.clientY - r.top) / r.height)),
+  ]
+}
+
+function curveDown(e: PointerEvent) {
+  const c = recipe.curve
+  if (!c) return
+  e.preventDefault()
+  const [x, y] = cpos(e)
+  let best = -1
+  let bd = 20
+  c.forEach(([px, py], i) => {
+    const dpx = Math.hypot((px - x) * 252, (py - y) * 168)
+    if (dpx < bd) {
+      bd = dpx
+      best = i
+    }
+  })
+  if (best >= 0) {
+    dragIdx = best
+  } else {
+    c.push([x, y])
+    c.sort((a, b) => a[0] - b[0])
+    dragIdx = c.findIndex((p) => p[0] === x && p[1] === y)
+  }
+  ;(e.currentTarget as Element).setPointerCapture(e.pointerId)
+  drawCurve()
+}
+
+function curveMove(e: PointerEvent) {
+  if (dragIdx < 0) return
+  const c = recipe.curve
+  if (!c) return
+  let [x, y] = cpos(e)
+  if (dragIdx === 0) x = 0
+  else if (dragIdx === c.length - 1) x = 1
+  else x = Math.min(c[dragIdx + 1][0] - 0.02, Math.max(c[dragIdx - 1][0] + 0.02, x))
+  c[dragIdx] = [x, y]
+  drawCurve()
+}
+
+function curveUp() {
+  dragIdx = -1
+  drawCurve()
+}
+
+function curveDbl(e: MouseEvent) {
+  const c = recipe.curve
+  if (!c || c.length <= 2) return
+  const r = (curveCanvas.value as HTMLCanvasElement).getBoundingClientRect()
+  const x = (e.clientX - r.left) / r.width
+  const y = 1 - (e.clientY - r.top) / r.height
+  let best = -1
+  let bd = 20
+  c.forEach(([px, py], i) => {
+    if (i === 0 || i === c.length - 1) return
+    const dpx = Math.hypot((px - x) * 252, (py - y) * 168)
+    if (dpx < bd) {
+      bd = dpx
+      best = i
+    }
+  })
+  if (best > 0) {
+    c.splice(best, 1)
+    drawCurve()
+  }
+}
+
+function toggleCurve() {
+  recipe.curve = recipe.curve ? null : [[0, 0], [1, 1]]
+  void nextTick(drawCurve)
+}
+
+watch([hist, () => JSON.stringify(recipe.curve)], () => void nextTick(drawCurve))
 
 // ------------------------------------------------------------- recorte
 
@@ -434,6 +605,29 @@ onUnmounted(() => {
           />
         </div>
 
+        <div class="curvesec">
+          <div class="srow">
+            <label>Curva de tonos</label>
+            <button class="mini" @click="toggleCurve">
+              {{ recipe.curve ? 'Quitar' : 'Activar' }}
+            </button>
+          </div>
+          <canvas
+            v-if="recipe.curve"
+            ref="curveCanvas"
+            width="252"
+            height="168"
+            class="curvecv"
+            @pointerdown="curveDown"
+            @pointermove="curveMove"
+            @pointerup="curveUp"
+            @dblclick="curveDbl"
+          ></canvas>
+          <p v-if="recipe.curve" class="hintc">
+            clic: añadir punto · arrastrar: mover · doble clic: quitar
+          </p>
+        </div>
+
         <div class="geom">
           <div class="srow"><label>Geometría</label></div>
           <div class="geombtns">
@@ -597,6 +791,19 @@ button.primary { background: var(--ok); border-color: var(--ok); color: #fff; fo
 .srow label { font-size: 12.5px; color: var(--dim); }
 .val { font-size: 12px; color: var(--txt); font-variant-numeric: tabular-nums; }
 input[type='range'] { width: 100%; accent-color: var(--acc); }
+.curvesec { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 10px; }
+.curvesec .mini { padding: 3px 9px; font-size: 12px; }
+.curvecv {
+  width: 100%;
+  margin-top: 6px;
+  background: var(--panel2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  display: block;
+  touch-action: none;
+  cursor: crosshair;
+}
+.hintc { color: var(--dim); font-size: 11px; margin: 4px 0 0; }
 .geom { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 10px; }
 .geombtns { display: flex; gap: 6px; margin: 6px 0; }
 .cropctl { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 10px; }

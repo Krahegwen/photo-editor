@@ -17,14 +17,17 @@ from . import (
     db,
     develop,
     export,
+    gallery,
     jobs,
     metrics,
     previews,
     scan,
     stacking,
+    timelapse,
     trash,
     xmp,
 )
+from .formats import is_raw
 
 app = FastAPI(title="photo-editor engine", version=__version__)
 app.add_middleware(
@@ -92,6 +95,29 @@ class StackRequest(BaseModel):
     crop_px: int = 1200
     escala: str = "auto"
     force: bool = False
+
+
+class TimelapseRequest(BaseModel):
+    photo_ids: list[int]
+    fps: int = 24
+    force: bool = False
+
+
+class KeywordsItem(BaseModel):
+    photo_id: int
+    keywords: list[str]
+    replace: bool = False
+
+
+class KeywordsRequest(BaseModel):
+    items: list[KeywordsItem]
+
+
+class GalleryRequest(BaseModel):
+    folder_id: int | None = None
+    photo_ids: list[int] | None = None
+    min_rating: int = 4
+    titulo: str | None = None
 
 
 # ---------------------------------------------------------------- estado
@@ -171,8 +197,20 @@ def _annotate(rows: list[dict]) -> list[dict]:
             if (r["clip_hi"] or 0) > 0.15:
                 flags.append("quemada")
         r["flags"] = flags
+        r["best_of_burst"] = False
+
+    by_gid: dict[int, list[dict]] = {}
+    for r in rows:
+        by_gid.setdefault(r["_burst"], []).append(r)
+    for r in rows:
         n = sizes[r.pop("_burst")]
         r["burst_n"] = n if n >= BURST_MIN else None
+    # la más nítida de cada ráfaga, como guía de cribado
+    for members in by_gid.values():
+        if len(members) >= BURST_MIN:
+            with_sharp = [m for m in members if m["sharp"] is not None]
+            if with_sharp:
+                max(with_sharp, key=lambda m: m["sharp"])["best_of_burst"] = True
     return rows
 
 
@@ -502,6 +540,87 @@ def start_stack(req: StackRequest):
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     return jobs.submit("stack", f"Apilar {len(req.photo_ids)} · {req.mode}", fn)
+
+
+# ---------------------------------------------------------------- timelapse
+
+
+@app.post("/api/timelapse", status_code=202)
+def start_timelapse(req: TimelapseRequest):
+    try:
+        fn = timelapse.job_fn(req.photo_ids, req.fps, req.force)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return jobs.submit(
+        "timelapse", f"Timelapse {len(req.photo_ids)}f · {req.fps}fps", fn
+    )
+
+
+# ---------------------------------------------------------------- keywords
+
+
+@app.post("/api/keywords")
+def set_keywords(req: KeywordsRequest):
+    root = config.get_root()
+    con = db.connect()
+    results = []
+    try:
+        for it in req.items:
+            try:
+                row = _photo_row(con, it.photo_id)
+                sidecar = root / row["folder"] / (row["stem"] + ".xmp")
+                final = xmp.write_keywords(sidecar, it.keywords, it.replace)
+                results.append({"photo_id": it.photo_id, "ok": True, "keywords": final})
+            except HTTPException as exc:
+                results.append({"photo_id": it.photo_id, "ok": False, "error": exc.detail})
+            except Exception as exc:
+                results.append({"photo_id": it.photo_id, "ok": False, "error": str(exc)})
+    finally:
+        con.close()
+    return {"results": results}
+
+
+# ---------------------------------------------------------------- galería
+
+
+@app.post("/api/gallery", status_code=202)
+def start_gallery(req: GalleryRequest):
+    con = db.connect()
+    try:
+        if req.photo_ids:
+            ids = req.photo_ids
+            titulo = req.titulo or "galeria"
+        elif req.folder_id is not None:
+            folder = con.execute(
+                "SELECT name FROM folders WHERE id=?", (req.folder_id,)
+            ).fetchone()
+            if folder is None:
+                raise HTTPException(404, "Carpeta no encontrada")
+            rows = con.execute(
+                """SELECT id, stem, ext FROM photos
+                   WHERE folder_id=? AND rating>=? ORDER BY stem, ext""",
+                (req.folder_id, max(1, req.min_rating)),
+            ).fetchall()
+            by_stem: dict[str, list] = {}
+            for r in rows:
+                by_stem.setdefault(r["stem"], []).append(r)
+            ids = []
+            for stem in sorted(by_stem):
+                group = by_stem[stem]
+                raws = [r for r in group if is_raw(r["ext"])]
+                ids.append((raws or group)[0]["id"])
+            titulo = req.titulo or folder["name"]
+        else:
+            raise HTTPException(400, "Indica folder_id o photo_ids")
+    finally:
+        con.close()
+    if not ids:
+        raise HTTPException(400, "Ninguna foto cumple el filtro")
+    try:
+        fn = gallery.job_fn(ids, titulo)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return jobs.submit("gallery", f"Galería · {titulo} ({len(ids)})", fn)
 
 
 # ---------------------------------------------------------------- trabajos

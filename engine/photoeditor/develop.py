@@ -32,6 +32,7 @@ DEFAULTS: dict = {
     "rot90": 0,         # 0..3 giros de 90° en sentido antihorario
     "angle": 0.0,       # -15..15    enderezar
     "crop": None,       # {x,y,w,h} normalizado 0..1 sobre el encuadre girado
+    "curve": None,      # curva de tonos master: [[x,y],...] 0..1, o None
 }
 
 PROXY_PX = 1536
@@ -187,6 +188,36 @@ def apply_recipe(img: np.ndarray, recipe: dict, skip_crop: bool = False) -> np.n
     ct = r["contrast"] / 100
     if ct:
         out = np.clip((out - 0.5) * (1 + 0.8 * ct) + 0.5, 0, 1)
+
+    # --- curva de tonos (master RGB; PCHIP monótona, LUT de 4096 para no
+    #     introducir bandeados en los TIFF de 16 bits)
+    cv_pts = r.get("curve")
+    if cv_pts and len(cv_pts) >= 2:
+        try:
+            pts = sorted((float(p[0]), float(p[1])) for p in cv_pts)
+            fx: list[float] = []
+            fy: list[float] = []
+            for x, y in pts:
+                if not fx or x > fx[-1] + 1e-4:
+                    fx.append(min(max(x, 0.0), 1.0))
+                    fy.append(min(max(y, 0.0), 1.0))
+            if fx[0] > 0:
+                fx.insert(0, 0.0)
+                fy.insert(0, fy[0])
+            if fx[-1] < 1:
+                fx.append(1.0)
+                fy.append(fy[-1])
+            grid = np.linspace(0, 1, 4096, dtype=np.float32)
+            try:
+                from scipy.interpolate import PchipInterpolator
+
+                lut = PchipInterpolator(fx, fy)(grid).astype(np.float32)
+            except Exception:
+                lut = np.interp(grid, np.float32(fx), np.float32(fy)).astype(np.float32)
+            lut = np.clip(lut, 0, 1)
+            out = lut[np.clip(out * 4095.0, 0, 4095).astype(np.int32)]
+        except Exception:
+            pass  # curva malformada: mejor ignorarla que romper el revelado
 
     # --- saturación / vibrance
     s, v = r["saturation"] / 100, r["vibrance"] / 100

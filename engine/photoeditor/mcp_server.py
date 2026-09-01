@@ -325,6 +325,65 @@ def apilar(carpeta: str, modo: str, desde: str | None = None, hasta: str | None 
 
 
 @mcp.tool()
+def timelapse(carpeta: str, desde: str | None = None, hasta: str | None = None,
+              fps: int = 24, force: bool = False) -> dict:
+    """Monta un timelapse MP4 (1920x1080, H.264) con las fotos del rango
+    desde/hasta (4 dígitos; mínimo 10 fotos). Trabajo encolado; el resultado
+    queda como timelapse_<rango>_<fps>fps.mp4 en la carpeta."""
+    f = _folder(carpeta)
+    todos = _photos(f["id"])
+    ps = [p for p in todos if is_raw(p["ext"])] or todos
+    if desde and hasta:
+        d, h = desde.strip()[-4:], hasta.strip()[-4:]
+        ids = [p["id"] for p in ps if p["stem"][-4:].isdigit() and d <= p["stem"][-4:] <= h]
+    else:
+        ids = [p["id"] for p in ps]
+    if len(ids) < 10:
+        raise ToolError(f"Solo {len(ids)} fotos — un timelapse necesita al menos 10")
+    return _post("/api/timelapse", {"photo_ids": ids, "fps": fps, "force": force})
+
+
+@mcp.tool()
+def etiquetar(carpeta: str, fotos: list[str], etiquetas: list[str],
+              reemplazar: bool = False) -> dict:
+    """Escribe keywords en los sidecars .xmp (dc:subject, compatibles con
+    Lightroom). Por defecto AÑADE a las existentes; reemplazar=True las
+    sustituye. Devuelve la lista final por foto."""
+    f = _folder(carpeta)
+    ps = _photos(f["id"])
+    items = [
+        {"photo_id": _match(ps, ref)["id"], "keywords": etiquetas, "replace": reemplazar}
+        for ref in fotos
+    ]
+    res = _post("/api/keywords", {"items": items})
+    ok = [r for r in res["results"] if r["ok"]]
+    return {
+        "etiquetadas": len(ok),
+        "keywords_finales": ok[0]["keywords"] if ok else [],
+        "errores": [r for r in res["results"] if not r["ok"]],
+    }
+
+
+@mcp.tool()
+def galeria(carpeta: str, min_rating: int = 4, titulo: str | None = None,
+            fotos: list[str] | None = None) -> dict:
+    """Genera una galería web estática (HTML oscuro + lightbox) con las fotos
+    de min_rating (o una lista concreta), reveladas con su receta a 2048 px.
+    Se crea en local (%LOCALAPPDATA%/photo-editor/galleries/) — NO publica
+    nada: el resultado incluye el comando wrangler por si Diego quiere subirla
+    a Cloudflare Pages. Trabajo encolado."""
+    f = _folder(carpeta)
+    payload: dict = {"titulo": titulo}
+    if fotos:
+        ps = _photos(f["id"])
+        payload["photo_ids"] = [_match(ps, ref)["id"] for ref in fotos]
+    else:
+        payload["folder_id"] = f["id"]
+        payload["min_rating"] = min_rating
+    return _post("/api/gallery", payload)
+
+
+@mcp.tool()
 def escanear(carpeta: str | None = None) -> dict:
     """Re-indexa el archivo completo (o una carpeta) tras cambios en disco."""
     payload = {"folders": [_folder(carpeta)["name"]]} if carpeta else {}

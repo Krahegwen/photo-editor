@@ -12,6 +12,7 @@ const MODES = [
   { key: 'max', label: 'Máximo', hint: 'sin alinear, máximo por píxel — trails y composites de fuegos' },
   { key: 'media', label: 'Media', hint: 'sin alinear, media sigma-clip — reducción de ruido en escena fija' },
   { key: 'hdr', label: 'HDR', hint: 'brackets ordenados por exposición, fusión Mertens (máx. 12)' },
+  { key: 'timelapse', label: 'Timelapse', hint: 'vídeo MP4 1080p desde la secuencia (mínimo 10 fotos)' },
 ] as const
 
 const arws = computed(() => {
@@ -24,8 +25,11 @@ const desde = ref(arws.value[0]?.stem.slice(-4) ?? '')
 const hasta = ref(arws.value[arws.value.length - 1]?.stem.slice(-4) ?? '')
 const escala = ref('auto')
 const cropPx = ref(1200)
+const fps = ref(24)
 const busy = ref(false)
 const error = ref<string | null>(null)
+
+const minFotos = computed(() => (mode.value === 'timelapse' ? 10 : 2))
 
 const selected = computed(() => {
   const d = desde.value.trim().slice(-4)
@@ -38,15 +42,16 @@ const selected = computed(() => {
 })
 
 async function launch() {
-  if (selected.value.length < 2 || busy.value) return
+  if (selected.value.length < minFotos.value || busy.value) return
   busy.value = true
   error.value = null
   try {
-    await api.stack(
-      selected.value.map((p) => p.id),
-      mode.value,
-      { cropPx: cropPx.value, escala: escala.value },
-    )
+    const ids = selected.value.map((p) => p.id)
+    if (mode.value === 'timelapse') {
+      await api.timelapse(ids, fps.value)
+    } else {
+      await api.stack(ids, mode.value, { cropPx: cropPx.value, escala: escala.value })
+    }
     emit('started')
   } catch (e) {
     error.value = String(e)
@@ -78,12 +83,12 @@ async function launch() {
         <input v-model="desde" class="num" maxlength="4" inputmode="numeric" />
         <span class="dim">a</span>
         <input v-model="hasta" class="num" maxlength="4" inputmode="numeric" />
-        <span class="count" :class="{ bad: selected.length < 2 }">
+        <span class="count" :class="{ bad: selected.length < minFotos }">
           {{ selected.length }} fotos
         </span>
       </div>
 
-      <div class="row">
+      <div v-if="mode !== 'timelapse'" class="row">
         <label>Escala</label>
         <select v-model="escala">
           <option value="auto">auto (media salvo luna/max)</option>
@@ -99,18 +104,39 @@ async function launch() {
           </select>
         </template>
       </div>
+      <div v-else class="row">
+        <label>FPS</label>
+        <select v-model.number="fps">
+          <option :value="12">12</option>
+          <option :value="24">24</option>
+          <option :value="30">30</option>
+        </select>
+        <span class="dim">
+          ≈ {{ selected.length && fps ? (selected.length / fps).toFixed(1) : '?' }} s de vídeo
+        </span>
+      </div>
 
-      <p class="dim note">
+      <p v-if="mode !== 'timelapse'" class="dim note">
         El resultado queda como <code>apilado_{{ mode }}_{{ desde || '····' }}-{{ hasta || '····' }}.tif/jpg</code>
         en la carpeta (TIFF de 16 bits para seguir editándolo en Revelar). Los temporales van
         fuera de tus carpetas y se borran solos.
+      </p>
+      <p v-else class="dim note">
+        El resultado queda como <code>timelapse_{{ desde || '····' }}-{{ hasta || '····' }}_{{ fps }}fps.mp4</code>
+        (1080p H.264) en la carpeta.
       </p>
 
       <div v-if="error" class="err">{{ error }}</div>
 
       <div class="foot">
-        <button class="primary" :disabled="selected.length < 2 || busy" @click="launch">
-          {{ busy ? 'Encolando…' : `Apilar ${selected.length} fotos` }}
+        <button class="primary" :disabled="selected.length < minFotos || busy" @click="launch">
+          {{
+            busy
+              ? 'Encolando…'
+              : mode === 'timelapse'
+                ? `Timelapse de ${selected.length} fotos`
+                : `Apilar ${selected.length} fotos`
+          }}
         </button>
         <button @click="emit('close')">Cancelar</button>
       </div>

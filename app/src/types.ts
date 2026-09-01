@@ -20,6 +20,7 @@ export interface Photo {
   metrics_at: number | null
   flags: string[]
   burst_n: number | null
+  best_of_burst: boolean
   has_recipe: boolean
 }
 
@@ -103,6 +104,7 @@ export interface Recipe {
   rot90: number
   angle: number
   crop: CropBox | null
+  curve: [number, number][] | null
 }
 
 export interface Hist {
