@@ -2,7 +2,13 @@
 
 App local que sustituye Lightroom/Photoshop para el flujo del usuario (cribar →
 puntuar → revelar ARW → apilar astro → exportar). Plan por fases: F0 cimientos ✔,
-F1 cribado ✔, F2 revelado ✔, F3 MCP+jobs ✔, F4 astro (siguiente), F5 extras.
+F1 cribado ✔, F2 revelado ✔, F3 MCP+jobs ✔, F4 astro ✔, F5 extras (según uso).
+
+Notas F4: `stacking.py` — modos luna (port de proc.py: centroide+phaseCorrelate),
+estrellas (detección propia + estimateAffinePartial2D RANSAC; NO astroalign),
+media, max, hdr (Mertens). Temporales .npy uint16 en %LOCALAPPDATA%/stackwork,
+borrados al acabar. Salida apilado_<modo>_<rango>.tif (16b LZW) + .jpg en la
+carpeta; el acabado (viejo finish.py) se hace abriendo el TIFF en Revelar.
 
 Notas F3: cola secuencial en `jobs.py` (registro en memoria, /api/jobs);
 escaneo/métricas/export/cerrar-carpeta son jobs. `mcp_server.py` = cliente

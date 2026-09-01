@@ -40,6 +40,18 @@ export const api = {
   metrics: (folderId: number) => post<Job>('/api/metrics', { folder_id: folderId }),
   export: (photoIds: number[], preset: PresetKey, force = false) =>
     post<Job>('/api/export', { photo_ids: photoIds, preset, force }),
+  stack: (
+    photoIds: number[],
+    mode: string,
+    opts: { cropPx?: number; escala?: string; force?: boolean } = {},
+  ) =>
+    post<Job>('/api/stack', {
+      photo_ids: photoIds,
+      mode,
+      crop_px: opts.cropPx ?? 1200,
+      escala: opts.escala ?? 'auto',
+      force: opts.force ?? false,
+    }),
   closeFolder: (folderId: number, execute = false) =>
     post<{ report: CloseReport; job: Job | null }>('/api/close_folder', {
       folder_id: folderId,

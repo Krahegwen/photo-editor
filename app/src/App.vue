@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { api } from './api'
 import CloseFolder from './components/CloseFolder.vue'
 import DeleteReview from './components/DeleteReview.vue'
+import StackDialog from './components/StackDialog.vue'
 import Develop from './components/Develop.vue'
 import Loupe from './components/Loupe.vue'
 import PhotoCard from './components/PhotoCard.vue'
@@ -22,6 +23,7 @@ const loupeOpen = ref(false)
 const loupeIdx = ref(0)
 const deleteOpen = ref(false)
 const closeOpen = ref(false)
+const stackOpen = ref(false)
 const gridEl = ref<HTMLElement | null>(null)
 const loupeRef = ref<InstanceType<typeof Loupe> | null>(null)
 
@@ -288,6 +290,10 @@ function onKey(e: KeyboardEvent) {
     if (e.key === 'Escape') closeOpen.value = false
     return
   }
+  if (stackOpen.value) {
+    if (e.key === 'Escape') stackOpen.value = false
+    return
+  }
   if (developOpen.value) return // Develop gestiona su propio teclado
 
   const list = filtered.value
@@ -459,6 +465,17 @@ onUnmounted(() => {
               : `Exportar ${filtered.length}`
           }}
         </button>
+        <button
+          class="pill"
+          :disabled="filtered.length < 2 || runningKind('stack')"
+          @click="stackOpen = true"
+        >
+          {{
+            runningKind('stack')
+              ? `Apilando ${runningJob('stack')?.progress.done ?? 0}/${runningJob('stack')?.progress.total || '?'}…`
+              : 'Apilar'
+          }}
+        </button>
         <button class="pill" :disabled="!current || runningKind('close')" @click="closeOpen = true">
           Cerrar carpeta
         </button>
@@ -526,6 +543,14 @@ onUnmounted(() => {
       :folder="current"
       @close="closeOpen = false"
       @started="onCloseFolderStarted"
+    />
+
+    <StackDialog
+      v-if="stackOpen && current"
+      :photos="filtered"
+      :folder-name="current.name"
+      @close="stackOpen = false"
+      @started="stackOpen = false; refreshJobs()"
     />
   </div>
 </template>

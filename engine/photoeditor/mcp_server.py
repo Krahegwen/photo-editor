@@ -293,6 +293,36 @@ def cerrar_carpeta(carpeta: str, ejecutar: bool = False) -> dict:
 
 
 @mcp.tool()
+def apilar(carpeta: str, modo: str, desde: str | None = None, hasta: str | None = None,
+           fotos: list[str] | None = None, escala: str = "auto",
+           crop_px: int = 1200, force: bool = False) -> dict:
+    """Apila fotos de una carpeta como trabajo encolado. Modos: 'luna' (recorta el
+    disco y alinea subpíxel), 'estrellas' (alineado de campo estelar con rotación),
+    'media' (sigma-clip sin alinear), 'max' (máximo por píxel: trails y composites
+    de fuegos), 'hdr' (fusión de brackets por exposición). Selección por lista de
+    fotos o por rango desde/hasta (4 dígitos, p. ej. 8636 a 8727). El resultado
+    queda como apilado_<modo>_<rango>.tif/jpg en la carpeta, editable en Revelar."""
+    f = _folder(carpeta)
+    todos = _photos(f["id"])
+    ps = [p for p in todos if p["ext"] == ".arw"] or todos
+    if fotos:
+        ids = [_match(ps, ref)["id"] for ref in fotos]
+    elif desde and hasta:
+        d, h = desde.strip()[-4:], hasta.strip()[-4:]
+        ids = [
+            p["id"] for p in ps if p["stem"][-4:].isdigit() and d <= p["stem"][-4:] <= h
+        ]
+    else:
+        raise ToolError("Indica una lista de fotos o un rango desde/hasta")
+    if len(ids) < 2:
+        raise ToolError(f"Solo {len(ids)} fotos en la selección — hacen falta al menos 2")
+    return _post(
+        "/api/stack",
+        {"photo_ids": ids, "mode": modo, "crop_px": crop_px, "escala": escala, "force": force},
+    )
+
+
+@mcp.tool()
 def escanear(carpeta: str | None = None) -> dict:
     """Re-indexa el archivo completo (o una carpeta) tras cambios en disco."""
     payload = {"folders": [_folder(carpeta)["name"]]} if carpeta else {}

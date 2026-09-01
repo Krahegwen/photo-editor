@@ -21,6 +21,7 @@ from . import (
     metrics,
     previews,
     scan,
+    stacking,
     trash,
     xmp,
 )
@@ -83,6 +84,14 @@ class ExportRequest(BaseModel):
 class CloseFolderRequest(BaseModel):
     folder_id: int
     execute: bool = False
+
+
+class StackRequest(BaseModel):
+    photo_ids: list[int]
+    mode: str
+    crop_px: int = 1200
+    escala: str = "auto"
+    force: bool = False
 
 
 # ---------------------------------------------------------------- estado
@@ -481,6 +490,18 @@ def close_folder(req: CloseFolderRequest):
         "close", f"Cerrar {report['folder']}", closefolder.job_fn(req.folder_id)
     )
     return {"report": report, "job": job}
+
+
+# ---------------------------------------------------------------- apilado
+
+
+@app.post("/api/stack", status_code=202)
+def start_stack(req: StackRequest):
+    try:
+        fn = stacking.job_fn(req.photo_ids, req.mode, req.crop_px, req.escala, req.force)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return jobs.submit("stack", f"Apilar {len(req.photo_ids)} · {req.mode}", fn)
 
 
 # ---------------------------------------------------------------- trabajos
