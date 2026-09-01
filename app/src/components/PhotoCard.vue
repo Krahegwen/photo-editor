@@ -22,6 +22,7 @@ const last4 = (s: string) => s.slice(-4)
       <span v-if="photo.burst_n" class="ext burst" :title="`ráfaga de ${photo.burst_n}`">
         ⧉{{ photo.burst_n }}
       </span>
+      <span v-if="photo.has_recipe" class="ext recipe" title="Tiene receta de revelado">✎</span>
       <span v-for="fl in photo.flags" :key="fl" class="flag">{{ fl }}</span>
       <span class="right">
         <span v-if="photo.rating === 1" class="discardmark">1★</span>
@@ -74,6 +75,7 @@ const last4 = (s: string) => s.slice(-4)
   border-radius: 4px;
   padding: 0 4px;
 }
+.ext.recipe { color: var(--acc); border-color: var(--acc); }
 .right { margin-left: auto; }
 .stars { color: var(--acc); letter-spacing: 1px; }
 .discardmark { color: var(--no); font-weight: 700; }

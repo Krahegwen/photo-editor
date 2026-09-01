@@ -1,4 +1,5 @@
 """API REST local. La UI Vue habla con esto; en F3 el servidor MCP también."""
+import base64
 import datetime as dt
 import json
 import time
@@ -10,7 +11,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import __version__, config, db, metrics, previews, scan, xmp
+from . import __version__, config, db, develop, export, metrics, previews, scan, xmp
 
 app = FastAPI(title="photo-editor engine", version=__version__)
 app.add_middleware(
@@ -43,6 +44,28 @@ class MetricsRequest(BaseModel):
 
 class DeleteRequest(BaseModel):
     photo_ids: list[int]
+
+
+class RecipeRequest(BaseModel):
+    recipe: dict
+
+
+class PreviewRequest(BaseModel):
+    photo_id: int
+    recipe: dict
+    skip_crop: bool = False
+
+
+class CopyRecipeRequest(BaseModel):
+    recipe: dict
+    to_photo_ids: list[int]
+    include_geometry: bool = False
+
+
+class ExportRequest(BaseModel):
+    photo_ids: list[int]
+    preset: str
+    force: bool = False
 
 
 # ---------------------------------------------------------------- estado
@@ -140,6 +163,16 @@ def list_photos(folder_id: int):
                 (folder_id,),
             ).fetchall()
         ]
+        for r in rows:
+            r["has_recipe"] = False
+        try:
+            fname = con.execute("SELECT name FROM folders WHERE id=?", (folder_id,)).fetchone()
+            if fname:
+                fdir = config.get_root() / fname["name"]
+                for r in rows:
+                    r["has_recipe"] = (fdir / f"{r['stem']}.pe.json").exists()
+        except RuntimeError:
+            pass
         return _annotate(rows)
     finally:
         con.close()
@@ -324,6 +357,9 @@ def delete_photos(req: DeleteRequest):
                 sidecar = root / row["folder"] / (row["stem"] + ".xmp")
                 if others == 0 and sidecar.exists():
                     send2trash(str(sidecar))
+                recipe = root / row["folder"] / (row["stem"] + ".pe.json")
+                if others == 0 and recipe.exists():
+                    send2trash(str(recipe))
                 con.execute("DELETE FROM photos WHERE id=?", (pid,))
                 con.commit()
                 touched.add(row["folder_id"])
@@ -342,6 +378,107 @@ def delete_photos(req: DeleteRequest):
     if trashed:
         _audit("papelera", trashed)
     return {"trashed": trashed, "errors": errors}
+
+
+# ---------------------------------------------------------------- revelado
+
+
+@app.post("/api/develop/preview")
+def develop_preview(req: PreviewRequest):
+    t0 = time.time()
+    con = db.connect()
+    try:
+        row = _photo_row(con, req.photo_id)
+    finally:
+        con.close()
+    abs_path = config.get_root() / row["folder"] / (row["stem"] + row["ext"])
+    if not abs_path.exists():
+        raise HTTPException(404, "El archivo ya no está en disco")
+    try:
+        proxy = develop.get_proxy(req.photo_id, abs_path, row["mtime"])
+        out = develop.apply_recipe(proxy, req.recipe, skip_crop=req.skip_crop)
+        jpeg = develop.encode_jpeg(out)
+        hist = develop.histogram(out)
+    except Exception as exc:
+        raise HTTPException(500, f"Fallo revelando: {exc}") from exc
+    return {
+        "jpeg_b64": base64.b64encode(jpeg).decode("ascii"),
+        "hist": hist,
+        "w": out.shape[1],
+        "h": out.shape[0],
+        "ms": int((time.time() - t0) * 1000),
+    }
+
+
+@app.post("/api/develop/copy")
+def copy_recipe(req: CopyRecipeRequest):
+    recipe = develop.normalize(req.recipe)
+    if not req.include_geometry:
+        for k in ("crop", "rot90", "angle"):
+            recipe[k] = develop.DEFAULTS[k]
+    con = db.connect()
+    results = []
+    try:
+        root = config.get_root()
+        for pid in req.to_photo_ids:
+            try:
+                row = _photo_row(con, pid)
+                develop.save_recipe(
+                    develop.recipe_path(root, row["folder"], row["stem"]), recipe
+                )
+                results.append({"photo_id": pid, "ok": True})
+            except HTTPException as exc:
+                results.append({"photo_id": pid, "ok": False, "error": exc.detail})
+            except Exception as exc:
+                results.append({"photo_id": pid, "ok": False, "error": str(exc)})
+    finally:
+        con.close()
+    return {"results": results}
+
+
+def _recipe_file(photo_id: int) -> Path:
+    con = db.connect()
+    try:
+        row = _photo_row(con, photo_id)
+    finally:
+        con.close()
+    return develop.recipe_path(config.get_root(), row["folder"], row["stem"])
+
+
+@app.get("/api/develop/{photo_id}")
+def get_recipe(photo_id: int):
+    return {"recipe": develop.load_recipe(_recipe_file(photo_id)), "defaults": develop.DEFAULTS}
+
+
+@app.put("/api/develop/{photo_id}")
+def put_recipe(photo_id: int, req: RecipeRequest):
+    develop.save_recipe(_recipe_file(photo_id), req.recipe)
+    return {"ok": True}
+
+
+@app.delete("/api/develop/{photo_id}")
+def delete_recipe(photo_id: int):
+    path = _recipe_file(photo_id)
+    if path.exists():
+        path.unlink()
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------- exportación
+
+
+@app.post("/api/export", status_code=202)
+def start_export(req: ExportRequest):
+    if req.preset not in export.PRESETS:
+        raise HTTPException(400, f"Preset desconocido: {req.preset}")
+    if not export.run(req.photo_ids, req.preset, req.force):
+        raise HTTPException(409, "Ya hay una exportación en marcha")
+    return {"started": True}
+
+
+@app.get("/api/export/status")
+def export_status():
+    return export.state
 
 
 # ---------------------------------------------------------------- escaneo

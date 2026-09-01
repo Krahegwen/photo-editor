@@ -1,4 +1,15 @@
-import type { Exif, Folder, Health, MetricsState, Photo, ScanState } from './types'
+import type {
+  Exif,
+  ExportState,
+  Folder,
+  Health,
+  MetricsState,
+  Photo,
+  PresetKey,
+  PreviewResult,
+  Recipe,
+  ScanState,
+} from './types'
 
 async function req<T>(url: string, init?: RequestInit): Promise<T> {
   const r = await fetch(url, init)
@@ -31,4 +42,29 @@ export const api = {
   scan: (folders?: string[]) =>
     post<{ started: boolean }>('/api/scan', folders ? { folders } : {}),
   scanStatus: () => req<ScanState>('/api/scan/status'),
+
+  getRecipe: (photoId: number) =>
+    req<{ recipe: Recipe | null; defaults: Recipe }>(`/api/develop/${photoId}`),
+  putRecipe: (photoId: number, recipe: Recipe) =>
+    req<{ ok: boolean }>(`/api/develop/${photoId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recipe }),
+    }),
+  deleteRecipe: (photoId: number) =>
+    req<{ ok: boolean }>(`/api/develop/${photoId}`, { method: 'DELETE' }),
+  developPreview: (photoId: number, recipe: Recipe, skipCrop = false) =>
+    post<PreviewResult>('/api/develop/preview', {
+      photo_id: photoId,
+      recipe,
+      skip_crop: skipCrop,
+    }),
+  copyRecipe: (recipe: Recipe, toPhotoIds: number[], includeGeometry = false) =>
+    post<{ results: { photo_id: number; ok: boolean; error?: string }[] }>(
+      '/api/develop/copy',
+      { recipe, to_photo_ids: toPhotoIds, include_geometry: includeGeometry },
+    ),
+  export: (photoIds: number[], preset: PresetKey, force = false) =>
+    post<{ started: boolean }>('/api/export', { photo_ids: photoIds, preset, force }),
+  exportStatus: () => req<ExportState>('/api/export/status'),
 }

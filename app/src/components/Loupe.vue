@@ -4,7 +4,7 @@ import { api } from '../api'
 import type { Exif, Photo, Zoom } from '../types'
 
 const props = defineProps<{ photo: Photo; index: number; total: number }>()
-const emit = defineEmits<{ close: []; prev: []; next: []; rate: [n: number] }>()
+const emit = defineEmits<{ close: []; prev: []; next: []; rate: [n: number]; develop: [] }>()
 
 const zoom = ref<Zoom>('fit')
 const showExif = ref(true)
@@ -84,6 +84,7 @@ const exifRows = computed(() => {
           @click="emit('rate', photo.rating === 1 ? 0 : 1)"
         >✕</button>
       </div>
+      <button title="Revelar (D)" @click="emit('develop')">Revelar</button>
       <button title="Info EXIF (I)" @click="toggleExif">ℹ</button>
       <button title="Cerrar (Esc)" @click="emit('close')">✕</button>
     </div>

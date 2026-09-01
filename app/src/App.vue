@@ -2,9 +2,20 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { api } from './api'
 import DeleteReview from './components/DeleteReview.vue'
+import Develop from './components/Develop.vue'
 import Loupe from './components/Loupe.vue'
 import PhotoCard from './components/PhotoCard.vue'
-import type { FilterKey, Folder, Health, MetricsState, Photo, ScanState } from './types'
+import type {
+  ExportState,
+  FilterKey,
+  Folder,
+  Health,
+  MetricsState,
+  Photo,
+  PresetKey,
+  Recipe,
+  ScanState,
+} from './types'
 
 const health = ref<Health | null>(null)
 const folders = ref<Folder[]>([])
@@ -23,6 +34,15 @@ const loupeIdx = ref(0)
 const deleteOpen = ref(false)
 const gridEl = ref<HTMLElement | null>(null)
 const loupeRef = ref<InstanceType<typeof Loupe> | null>(null)
+
+const developOpen = ref(false)
+const copiedRecipe = ref<Recipe | null>(null)
+const exportPreset = ref<PresetKey>('normal')
+const exportState = ref<ExportState | null>(null)
+
+const developPhoto = computed(() =>
+  loupeOpen.value ? filtered.value[loupeIdx.value] : filtered.value[selIdx.value],
+)
 
 // ------------------------------------------------------------- datos
 
@@ -170,6 +190,57 @@ async function pollScan(refreshWhenDone: boolean) {
 
 // ------------------------------------------------------------- borrado
 
+async function closeDevelop() {
+  developOpen.value = false
+  await reloadPhotos()
+}
+
+function onCopyRecipe(r: Recipe) {
+  copiedRecipe.value = r
+  notice.value = 'Receta copiada — pégala desde la barra de filtros'
+}
+
+async function pasteRecipe() {
+  const r = copiedRecipe.value
+  if (!r || !filtered.value.length) return
+  if (!window.confirm(`¿Aplicar la receta copiada a ${filtered.value.length} fotos del filtro actual?`))
+    return
+  const res = await api.copyRecipe(r, filtered.value.map((p) => p.id))
+  const bad = res.results.filter((x) => !x.ok).length
+  notice.value = `Receta aplicada a ${res.results.length - bad} fotos${bad ? ` · ${bad} errores` : ''}`
+  await reloadPhotos()
+}
+
+async function startExport() {
+  if (!filtered.value.length || exportState.value?.running) return
+  if (!window.confirm(`¿Exportar ${filtered.value.length} fotos con el preset «${exportPreset.value}»?`))
+    return
+  error.value = null
+  try {
+    await api.export(filtered.value.map((p) => p.id), exportPreset.value)
+    await pollExport()
+  } catch (e) {
+    error.value = String(e)
+  }
+}
+
+async function pollExport() {
+  exportState.value = await api.exportStatus()
+  if (exportState.value.running) {
+    window.setTimeout(pollExport, 1000)
+  } else if (exportState.value.finished_at) {
+    const res = exportState.value.results
+    const bad = res.filter((r) => !r.ok)
+    notice.value = `Exportación «${exportState.value.preset}»: ${res.length - bad.length} ok${
+      bad.length
+        ? ` · ${bad.length} con error — ${bad.slice(0, 3).map((r) => `${r.stem}: ${r.error}`).join(' · ')}${bad.length > 3 ? '…' : ''}`
+        : ''
+    }`
+    await loadFolders()
+    await reloadPhotos()
+  }
+}
+
 function onDeleted(trashed: string[], errors: string[]) {
   deleteOpen.value = false
   notice.value = `${trashed.length} fotos enviadas a la papelera${
@@ -221,6 +292,7 @@ function onKey(e: KeyboardEvent) {
     if (e.key === 'Escape') deleteOpen.value = false
     return
   }
+  if (developOpen.value) return // Develop gestiona su propio teclado
 
   const list = filtered.value
   const ph = loupeOpen.value ? list[loupeIdx.value] : list[selIdx.value]
@@ -232,6 +304,11 @@ function onKey(e: KeyboardEvent) {
   }
   if (ph && (e.key === 'x' || e.key === 'X')) {
     rate(ph, ph.rating === 1 ? 0 : 1)
+    e.preventDefault()
+    return
+  }
+  if (ph && (e.key === 'd' || e.key === 'D')) {
+    developOpen.value = true
     e.preventDefault()
     return
   }
@@ -333,6 +410,39 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
               : 'Analizar nitidez'
           }}
         </button>
+        <button
+          class="pill"
+          :disabled="!filtered.length"
+          title="Revelar la foto seleccionada (D)"
+          @click="developOpen = true"
+        >
+          Revelar
+        </button>
+        <button
+          v-if="copiedRecipe"
+          class="pill warn"
+          :disabled="!filtered.length"
+          @click="pasteRecipe"
+        >
+          Pegar receta a {{ filtered.length }}
+        </button>
+        <select v-model="exportPreset" class="pillsel" title="Preset de exportación">
+          <option value="normal">Normal 4K</option>
+          <option value="favorita">Favorita → FAVS</option>
+          <option value="redes">Redes 2048</option>
+          <option value="impresion">Impresión q100</option>
+        </select>
+        <button
+          class="pill"
+          :disabled="!filtered.length || exportState?.running"
+          @click="startExport"
+        >
+          {{
+            exportState?.running
+              ? `Exportando ${exportState.done}/${exportState.total}…`
+              : `Exportar ${filtered.length}`
+          }}
+        </button>
         <button class="pill danger" :disabled="!counts.discard" @click="deleteOpen = true">
           Revisar descartes <b>{{ counts.discard }}</b>
         </button>
@@ -374,6 +484,14 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
       @prev="loupeIdx = Math.max(0, loupeIdx - 1)"
       @next="loupeIdx = Math.min(filtered.length - 1, loupeIdx + 1)"
       @rate="(n) => rate(filtered[loupeIdx], n)"
+      @develop="developOpen = true"
+    />
+
+    <Develop
+      v-if="developOpen && developPhoto"
+      :photo="developPhoto"
+      @close="closeDevelop"
+      @copy="onCopyRecipe"
     />
 
     <DeleteReview
@@ -482,6 +600,15 @@ h1 { font-size: 16px; margin: 0; }
 .pill.danger:not(:disabled) { border-color: var(--no); }
 .pill.warn { border-color: #7a4a33; color: #ffb38a; }
 .pill:disabled { opacity: 0.5; cursor: default; }
+.pillsel {
+  background: var(--panel2);
+  color: var(--txt);
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  padding: 4px 8px;
+  font-size: 12.5px;
+  cursor: pointer;
+}
 
 .notice {
   margin: 10px 18px 0;
