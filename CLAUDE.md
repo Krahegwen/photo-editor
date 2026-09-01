@@ -2,7 +2,14 @@
 
 App local que sustituye Lightroom/Photoshop para el flujo del usuario (cribar →
 puntuar → revelar ARW → apilar astro → exportar). Plan por fases: F0 cimientos ✔,
-F1 cribado ✔, F2 revelado ✔, F3 MCP+jobs ✔, F4 astro ✔, F5 extras (según uso).
+F1 cribado ✔, F2 revelado ✔, F3 MCP+jobs ✔, F4 astro ✔, F5 extras (1ª tanda ✔:
+curvas, mejor-de-ráfaga, timelapse, keywords, galería; quedan Tunnel/móvil,
+lensfun, dark frames según uso).
+
+Notas F5: curva master en la receta (PCHIP, LUT 4096); timelapse con el ffmpeg
+embebido de imageio-ffmpeg; keywords dc:subject conviviendo con xmp:Rating en
+el mismo sidecar; galería en %LOCALAPPDATA%/photo-editor/galleries (NUNCA
+publicar sin orden explícita de Diego — el job devuelve el comando wrangler).
 
 Notas F4: `stacking.py` — modos luna (port de proc.py: centroide+phaseCorrelate),
 estrellas (detector DoG propio + astroalign con puerta rápida de votación y
