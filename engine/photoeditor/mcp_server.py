@@ -15,6 +15,8 @@ import httpx
 from mcp.server.mcpserver import Image, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
+from .formats import is_raw
+
 BASE = os.environ.get("PHOTOED_URL", "http://127.0.0.1:8177")
 
 mcp = MCPServer(
@@ -79,8 +81,8 @@ def _match(photos: list[dict], ref: str) -> dict:
     stems = {p["stem"] for p in cand}
     if len(stems) > 1:
         raise ToolError(f"'{ref}' es ambiguo: {sorted(stems)[:8]}")
-    arw = [p for p in cand if p["ext"] == ".arw"]
-    return (arw or cand)[0]
+    raws = [p for p in cand if is_raw(p["ext"])]
+    return (raws or cand)[0]
 
 
 def _compact(p: dict) -> dict:
@@ -304,7 +306,7 @@ def apilar(carpeta: str, modo: str, desde: str | None = None, hasta: str | None 
     queda como apilado_<modo>_<rango>.tif/jpg en la carpeta, editable en Revelar."""
     f = _folder(carpeta)
     todos = _photos(f["id"])
-    ps = [p for p in todos if p["ext"] == ".arw"] or todos
+    ps = [p for p in todos if is_raw(p["ext"])] or todos
     if fotos:
         ids = [_match(ps, ref)["id"] for ref in fotos]
     elif desde and hasta:

@@ -6,6 +6,7 @@ stem) o si es descarte 1★; el TIFF de 16 bits solo existe para favoritas y
 debe estar duplicado en 999999 - FAVS.
 """
 from . import config, db, scan, trash
+from .formats import is_raw
 
 FAVS_DIR = "999999 - FAVS"
 
@@ -31,16 +32,16 @@ def analyze(folder_id: int) -> dict:
     finales = 0
     for stem in sorted(by_stem):
         exts = by_stem[stem]
-        arw = exts.get(".arw")
+        raw = next((exts[e] for e in exts if is_raw(e)), None)
         jpg = exts.get(".jpg") or exts.get(".jpeg")
         tif = exts.get(".tif") or exts.get(".tiff")
         if jpg is not None:
             finales += 1
-        if arw is not None:
-            if arw["rating"] == 1:
-                borrar.append({"stem": stem, "id": arw["id"], "motivo": "descarte 1★"})
+        if raw is not None:
+            if raw["rating"] == 1:
+                borrar.append({"stem": stem, "id": raw["id"], "motivo": "descarte 1★"})
             elif jpg is not None:
-                borrar.append({"stem": stem, "id": arw["id"], "motivo": "revelado (hay JPG final)"})
+                borrar.append({"stem": stem, "id": raw["id"], "motivo": "revelado (hay JPG final)"})
             else:
                 pendientes.append(stem)
         if tif is not None and folder["name"] != FAVS_DIR:

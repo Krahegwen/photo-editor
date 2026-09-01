@@ -76,8 +76,10 @@ def save_recipe(path: Path, recipe: dict) -> None:
 
 
 def decode(path: Path, half: bool) -> np.ndarray:
-    """RGB uint16. ARW vía rawpy; JPG/TIFF (favoritas de 16 bits) vía cv2."""
-    if path.suffix.lower() == ".arw":
+    """RGB uint16. RAW (ARW/DNG/RW2/…) vía rawpy; JPG/TIFF vía cv2."""
+    from .formats import is_raw
+
+    if is_raw(path.suffix):
         kwargs = dict(
             use_camera_wb=True,
             no_auto_bright=True,

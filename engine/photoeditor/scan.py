@@ -10,8 +10,8 @@ from pathlib import Path
 import exifread
 
 from . import config, db, xmp
+from .formats import IMAGE_EXTS
 
-IMAGE_EXTS = {".arw", ".jpg", ".jpeg", ".tif", ".tiff", ".png"}
 _EXIF_DT = re.compile(r"^(\d{4}):(\d{2}):(\d{2}) ")
 
 

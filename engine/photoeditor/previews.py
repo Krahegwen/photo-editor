@@ -15,6 +15,7 @@ import rawpy
 from PIL import Image, ImageOps
 
 from . import config
+from .formats import is_raw
 
 SIZES = (320, 1600, 3000, 6000)
 
@@ -27,7 +28,7 @@ def _cache_path(rel: str, mtime: float, size: int) -> Path:
 
 
 def _load_image(path: Path, size: int) -> Image.Image:
-    if path.suffix.lower() == ".arw":
+    if is_raw(path.suffix):
         with rawpy.imread(str(path)) as raw:
             th = None
             if size <= 1600:
