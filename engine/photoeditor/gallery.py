@@ -9,8 +9,9 @@ import json
 import re
 import shutil
 
-from . import config, db, develop
+from . import config, db, develop, gpu
 from .export import _resize_long, _save_jpg
+from .parallel import prefetch, workers
 
 _HTML = """<!doctype html>
 <html lang="es"><head><meta charset="utf-8">
@@ -103,25 +104,30 @@ def job_fn(photo_ids: list[int], titulo: str):
         job["progress"]["total"] = len(rows) + 1
         items: list[dict] = []
         fallidos: list[str] = []
-        for i, r in enumerate(rows, 1):
+
+        def _render(ir) -> dict:
+            i, r = ir
+            src = root / r["folder"] / (r["stem"] + r["ext"])
+            if not src.exists():
+                raise ValueError("no está en disco")
+            recipe = develop.load_recipe(develop.recipe_path(root, r["folder"], r["stem"]))
+            img16 = develop.render_full(src, recipe)
+            big = _resize_long(img16, 2048)
+            name = f"{i:03d}.jpg"
+            _save_jpg(big, out / "img" / name, q=90, subsampling=0, dpi=None)
+            _save_jpg(_resize_long(big, 480), out / "thumb" / name, q=82,
+                      subsampling=2, dpi=None)
+            return {"file": name, "cap": r["stem"]}
+
+        # revelados en paralelo (decode en hilos; la GPU, si la hay, serializa sola)
+        for (i, r), res in prefetch(list(enumerate(rows, 1)), _render, window=min(3, workers())):
             job["progress"]["current"] = r["stem"]
-            try:
-                src = root / r["folder"] / (r["stem"] + r["ext"])
-                if not src.exists():
-                    raise ValueError("no está en disco")
-                recipe = develop.load_recipe(
-                    develop.recipe_path(root, r["folder"], r["stem"])
-                )
-                img16 = develop.render_full(src, recipe)
-                big = _resize_long(img16, 2048)
-                name = f"{i:03d}.jpg"
-                _save_jpg(big, out / "img" / name, q=90, subsampling=0, dpi=None)
-                _save_jpg(_resize_long(big, 480), out / "thumb" / name, q=82,
-                          subsampling=2, dpi=None)
-                items.append({"file": name, "cap": r["stem"]})
-            except Exception as exc:
-                fallidos.append(f"{r['stem']}: {exc}")
+            if isinstance(res, Exception):
+                fallidos.append(f"{r['stem']}: {res}")
+            else:
+                items.append(res)
             job["progress"]["done"] += 1
+        gpu.release()
 
         if not items:
             raise ValueError(f"Ninguna foto renderizada — {'; '.join(fallidos[:4])}")

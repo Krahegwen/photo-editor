@@ -11,6 +11,23 @@ import uuid
 from pathlib import Path
 
 from . import config, db, naming, previews
+from .parallel import prefetch
+
+_nvenc_cache: dict[str, bool] = {}
+
+
+def _has_nvenc(ffmpeg: str) -> bool:
+    """¿Trae el ffmpeg el codificador NVIDIA? (el embebido de imageio-ffmpeg sí;
+    además hace falta driver NVIDIA — si falla al codificar, se cae a libx264)."""
+    if ffmpeg not in _nvenc_cache:
+        try:
+            out = subprocess.run(
+                [ffmpeg, "-hide_banner", "-encoders"], capture_output=True, text=True, timeout=30
+            ).stdout
+            _nvenc_cache[ffmpeg] = "h264_nvenc" in out
+        except Exception:
+            _nvenc_cache[ffmpeg] = False
+    return _nvenc_cache[ffmpeg]
 
 
 def _ffmpeg_exe() -> str:
@@ -61,40 +78,53 @@ def job_fn(photo_ids: list[int], fps: int = 24, force: bool = False):
         work = config.APP_DIR / "stackwork" / uuid.uuid4().hex[:8]
         work.mkdir(parents=True, exist_ok=True)
         try:
+            def _pv(r) -> Path:
+                abs_path = root / folder / (r["stem"] + r["ext"])
+                rel = f"{folder}/{r['stem']}{r['ext']}"
+                return previews.get_preview(abs_path, rel, r["mtime"], 1600)
+
             n = 0
             fallidos: list[str] = []
-            for r in rows:
+            for r, pv in prefetch(rows, _pv):
                 job["progress"]["current"] = r["stem"]
-                try:
-                    abs_path = root / folder / (r["stem"] + r["ext"])
-                    rel = f"{folder}/{r['stem']}{r['ext']}"
-                    pv = previews.get_preview(abs_path, rel, r["mtime"], 1600)
+                if isinstance(pv, Exception):
+                    fallidos.append(f"{r['stem']}: {pv}")
+                else:
                     n += 1
                     shutil.copyfile(pv, work / f"{n:05d}.jpg")
-                except Exception as exc:
-                    fallidos.append(f"{r['stem']}: {exc}")
                 job["progress"]["done"] += 1
             if n < 10:
                 raise ValueError(f"Solo {n} frames válidos")
 
             job["progress"]["current"] = "codificando"
-            cmd = [
-                ffmpeg, "-y", "-framerate", str(fps),
-                "-i", str(work / "%05d.jpg"),
-                "-vf",
-                "scale=1920:1080:force_original_aspect_ratio=decrease,"
-                "pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black",
-                "-c:v", "libx264", "-crf", "18", "-preset", "medium",
-                "-pix_fmt", "yuv420p", str(out),
-            ]
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
-            if proc.returncode != 0:
-                raise ValueError(f"ffmpeg falló: {proc.stderr[-400:]}")
+            codecs: list[tuple[str, list[str]]] = []
+            if _has_nvenc(ffmpeg):
+                codecs.append(("h264_nvenc", ["-c:v", "h264_nvenc", "-preset", "p5",
+                                              "-rc", "vbr", "-cq", "19", "-b:v", "0"]))
+            codecs.append(("libx264", ["-c:v", "libx264", "-crf", "18", "-preset", "medium"]))
+            codec, err = "", ""
+            for name, args in codecs:
+                cmd = [
+                    ffmpeg, "-y", "-framerate", str(fps),
+                    "-i", str(work / "%05d.jpg"),
+                    "-vf",
+                    "scale=1920:1080:force_original_aspect_ratio=decrease,"
+                    "pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black",
+                    *args, "-pix_fmt", "yuv420p", str(out),
+                ]
+                proc = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+                if proc.returncode == 0:
+                    codec = name
+                    break
+                err = proc.stderr[-400:]
+            if not codec:
+                raise ValueError(f"ffmpeg falló: {err}")
             job["progress"]["done"] += 1
             return {
                 "salida": f"{folder}/{out.name}",
                 "frames": n,
                 "fps": fps,
+                "codec": codec,
                 "duracion_s": round(n / fps, 1),
                 "fallidos": fallidos,
             }

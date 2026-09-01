@@ -1,6 +1,7 @@
 """API REST local. La UI Vue habla con esto; en F3 el servidor MCP también."""
 import base64
 import datetime as dt
+import threading
 import time
 from pathlib import Path
 
@@ -18,8 +19,10 @@ from . import (
     develop,
     export,
     gallery,
+    gpu,
     jobs,
     metrics,
+    parallel,
     previews,
     scan,
     stacking,
@@ -28,6 +31,31 @@ from . import (
     xmp,
 )
 from .formats import is_raw
+
+
+def _warmup_gpu() -> None:
+    """Compila los kernels de CuPy al arrancar (unos segundos, en segundo
+    plano) para que la primera preview/apilado no los pague."""
+    if not gpu.AVAILABLE:
+        return
+    try:
+        import numpy as _np
+
+        rng = _np.random.default_rng(0)
+        img = rng.random((1024, 1024, 3), dtype=_np.float32)
+        develop.apply_recipe(
+            img,
+            {"temp": 5, "tint": 3, "exposure": 0.3, "contrast": 10, "highlights": -10,
+             "shadows": 10, "blacks": 5, "saturation": 10, "vibrance": 10, "sharpen": 20,
+             "curve": [[0, 0], [0.5, 0.55], [1, 1]]},
+        )
+        stacking._detect_stars(rng.random((1024, 1024), dtype=_np.float32) * 1000, None, True)
+        gpu.release()
+    except Exception:
+        pass
+
+
+threading.Thread(target=_warmup_gpu, name="gpu-warmup", daemon=True).start()
 
 app = FastAPI(title="photo-editor engine", version=__version__)
 app.add_middleware(
@@ -138,6 +166,8 @@ def health():
     return {
         "ok": root_error is None,
         "root": root,
+        "gpu": gpu.info(),
+        "threads": parallel.workers(),
         "root_error": root_error,
         "folders": folders,
         "photos": photos,

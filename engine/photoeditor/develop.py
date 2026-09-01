@@ -23,6 +23,8 @@ try:  # al cargar, no en la primera curva: importar scipy cuesta ~1.4 s
 except Exception:  # sin scipy, interpolación lineal
     _Pchip = None
 
+from . import gpu
+
 DEFAULTS: dict = {
     "temp": 0,          # -100..100  azul ↔ ámbar (sobre el WB de cámara)
     "tint": 0,          # -100..100  verde ↔ magenta
@@ -132,12 +134,82 @@ def get_proxy(photo_id: int, path: Path, mtime: float) -> np.ndarray:
 # ------------------------------------------------------------------ pipeline
 
 
-def apply_recipe(img: np.ndarray, recipe: dict, skip_crop: bool = False) -> np.ndarray:
-    """img float32 RGB 0..1 (no se muta); devuelve el resultado procesado."""
-    r = normalize(recipe)
-    out = img
+def _blur_cpu(a: np.ndarray, sigma: float) -> np.ndarray:
+    return cv2.GaussianBlur(a, (0, 0), sigma)
 
-    # --- geometría
+
+def _blur_gpu(a, sigma: float):
+    return gpu.ndi.gaussian_filter(a, (sigma, sigma, 0), truncate=3.0)
+
+
+def _rgb2hsv_cv(xp, rgb):
+    hsv = cv2.cvtColor(np.ascontiguousarray(rgb), cv2.COLOR_RGB2HSV)
+    return hsv[..., 0], hsv[..., 1], hsv[..., 2]
+
+
+def _hsv2rgb_cv(xp, h, s, v):
+    return cv2.cvtColor(np.ascontiguousarray(np.stack([h, s, v], -1)), cv2.COLOR_HSV2RGB)
+
+
+def _rgb2hsv_xp(xp, rgb):
+    """HSV estándar (H en grados 0..360, S y V en 0..1), la misma convención
+    que cv2 para float32, escrito sobre el módulo de arrays (numpy o cupy)."""
+    r_, g_, b_ = rgb[..., 0], rgb[..., 1], rgb[..., 2]
+    mx = rgb.max(-1)
+    mn = rgb.min(-1)
+    d = mx - mn
+    dd = xp.maximum(d, 1e-12)
+    h = (
+        xp.where(
+            mx == r_,
+            ((g_ - b_) / dd) % 6.0,
+            xp.where(mx == g_, (b_ - r_) / dd + 2.0, (r_ - g_) / dd + 4.0),
+        )
+        * 60.0
+    )
+    h = xp.where(d > 0, h, 0.0)
+    s = xp.where(mx > 0, d / xp.maximum(mx, 1e-12), 0.0)
+    return h, s, mx
+
+
+def _hsv2rgb_xp(xp, h, s, v):
+    c = v * s
+    hp = (h / 60.0) % 6.0
+    x = c * (1 - xp.abs(hp % 2.0 - 1))
+    m = v - c
+    i = xp.minimum(xp.floor(hp).astype(xp.int32), 5)
+    z = xp.zeros_like(c)
+    # seis sectores explícitos: cupy.select solo admite escalares en default
+    sect = [i == 0, i == 1, i == 2, i == 3, i == 4, i == 5]
+    r_ = xp.select(sect, [c, x, z, z, x, c], 0.0)
+    g_ = xp.select(sect, [x, c, c, x, z, z], 0.0)
+    b_ = xp.select(sect, [z, z, x, c, c, x], 0.0)
+    return xp.stack([r_ + m, g_ + m, b_ + m], axis=-1)
+
+
+def apply_recipe(img: np.ndarray, recipe: dict, skip_crop: bool = False) -> np.ndarray:
+    """img float32 RGB 0..1 (no se muta); devuelve el resultado procesado.
+
+    Geometría en CPU (cv2); la parte tonal corre en la GPU si está disponible
+    y la imagen pasa de ~1 MP (preview y exportación), con el mismo código
+    sobre numpy o cupy y caída a CPU ante cualquier fallo."""
+    r = normalize(recipe)
+    out = _geometry(img, r, skip_crop)
+    if gpu.AVAILABLE and out.size >= 3_000_000:
+        try:
+            cp = gpu.cp
+            res = _tonal(
+                cp.asarray(np.ascontiguousarray(out), dtype=cp.float32),
+                r, cp, _blur_gpu, _rgb2hsv_xp, _hsv2rgb_xp,
+            )
+            return cp.asnumpy(res)
+        except Exception:
+            gpu.release()
+    return _tonal(np.ascontiguousarray(out), r, np, _blur_cpu, _rgb2hsv_cv, _hsv2rgb_cv)
+
+
+def _geometry(img: np.ndarray, r: dict, skip_crop: bool) -> np.ndarray:
+    out = img
     k = int(r["rot90"]) % 4
     if k:
         out = np.ascontiguousarray(np.rot90(out, k))
@@ -157,22 +229,26 @@ def apply_recipe(img: np.ndarray, recipe: dict, skip_crop: bool = False) -> np.n
         x1 = min(w, x0 + max(8, int(c["w"] * w)))
         y1 = min(h, y0 + max(8, int(c["h"] * h)))
         out = out[y0:y1, x0:x1]
+    return out
 
+
+def _tonal(out, r: dict, xp, blur, rgb2hsv, hsv2rgb):
+    """Parte tonal del revelado sobre el módulo de arrays `xp` (numpy o cupy)."""
     # --- WB + exposición en lineal
-    lin = np.clip(out, 0, 1) ** 2.2
+    lin = xp.clip(out, 0, 1) ** 2.2
     t, ti, ev = r["temp"] / 100, r["tint"] / 100, float(r["exposure"])
     if t or ti:
-        lin = lin * np.array([1 + 0.4 * t, 1 - 0.25 * ti, 1 - 0.4 * t], np.float32)
+        lin = lin * xp.asarray([1 + 0.4 * t, 1 - 0.25 * ti, 1 - 0.4 * t], dtype=xp.float32)
     if ev:
         lin = lin * (2.0 ** ev)
-    out = np.clip(lin, 0, None) ** (1 / 2.2)
-    out = np.clip(out, 0, 1)
+    out = xp.clip(lin, 0, None) ** (1 / 2.2)
+    out = xp.clip(out, 0, 1)
 
     # --- negros
     b = r["blacks"] / 100
     if b > 0:
         k2 = 0.10 * b
-        out = np.clip((out - k2) / (1 - k2), 0, 1)
+        out = xp.clip((out - k2) / (1 - k2), 0, 1)
     elif b < 0:
         k2 = 0.10 * -b
         out = out * (1 - k2) + k2
@@ -180,19 +256,19 @@ def apply_recipe(img: np.ndarray, recipe: dict, skip_crop: bool = False) -> np.n
     # --- altas luces / sombras con máscara de luminancia
     hl, sh = r["highlights"] / 100, r["shadows"] / 100
     if hl or sh:
-        L = out @ _LUMA
+        L = out @ xp.asarray(_LUMA)
         if hl:
-            m = np.clip((L - 0.55) / 0.45, 0, 1)[..., None]
+            m = xp.clip((L - 0.55) / 0.45, 0, 1)[..., None]
             out = out * (1 + 0.55 * hl * m)
         if sh:
-            m = np.clip(1 - L / 0.45, 0, 1)[..., None]
+            m = xp.clip(1 - L / 0.45, 0, 1)[..., None]
             out = out + 0.55 * sh * m * (1 - out)
-        out = np.clip(out, 0, 1)
+        out = xp.clip(out, 0, 1)
 
     # --- contraste
     ct = r["contrast"] / 100
     if ct:
-        out = np.clip((out - 0.5) * (1 + 0.8 * ct) + 0.5, 0, 1)
+        out = xp.clip((out - 0.5) * (1 + 0.8 * ct) + 0.5, 0, 1)
 
     # --- curva de tonos (master RGB; PCHIP monótona, LUT de 4096 para no
     #     introducir bandeados en los TIFF de 16 bits)
@@ -217,30 +293,27 @@ def apply_recipe(img: np.ndarray, recipe: dict, skip_crop: bool = False) -> np.n
                 lut = _Pchip(fx, fy)(grid).astype(np.float32)
             else:
                 lut = np.interp(grid, np.float32(fx), np.float32(fy)).astype(np.float32)
-            lut = np.clip(lut, 0, 1)
-            out = lut[np.clip(out * 4095.0, 0, 4095).astype(np.int32)]
+            lut = xp.asarray(np.clip(lut, 0, 1))
+            out = lut[xp.clip(out * 4095.0, 0, 4095).astype(xp.int32)]
         except Exception:
             pass  # curva malformada: mejor ignorarla que romper el revelado
 
     # --- saturación / vibrance
     s, v = r["saturation"] / 100, r["vibrance"] / 100
     if s or v:
-        hsv = cv2.cvtColor(np.ascontiguousarray(out), cv2.COLOR_RGB2HSV)
-        S = hsv[..., 1]
+        h, S, V = rgb2hsv(xp, out)
         if v:
             S = S * (1 + v * (1 - S))
         if s:
             S = S * (1 + s)
-        hsv[..., 1] = np.clip(S, 0, 1)
-        out = cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB)
+        out = hsv2rgb(xp, h, xp.clip(S, 0, 1), V)
 
     # --- enfoque (unsharp doble suave, como finish.py)
     sp = r["sharpen"] / 100
     if sp:
-        blur = cv2.GaussianBlur(out, (0, 0), 2.0)
-        out = np.clip(out + 0.9 * sp * (out - blur), 0, 1)
+        out = xp.clip(out + 0.9 * sp * (out - blur(out, 2.0)), 0, 1)
 
-    return np.clip(out, 0, 1)
+    return xp.clip(out, 0, 1)
 
 
 def histogram(img: np.ndarray) -> dict:

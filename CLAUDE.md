@@ -70,6 +70,19 @@ su política de archivo; nunca sobreescribe sin force.
   archivo fotográfico (ver su README): no reinventar el pipeline.
 - UI y textos en español.
 
+## Rendimiento (CPU y GPU opcional)
+
+- `parallel.prefetch` decodifica por delante en hilos (LibRaw suelta el GIL):
+  apilados, timelapse, galería y export en lote. PHOTOED_THREADS lo ajusta
+  (por defecto mitad de hilos lógicos, tope 4).
+- `gpu.py`: aceleración opcional con CuPy (`uv sync --extra gpu`: CuPy +
+  librerías CUDA en wheels de pip, sin CUDA Toolkit). Cubre sigma-clip,
+  detección DoG y la parte tonal del revelado (geometría sigue en cv2/CPU).
+  Todo cae a CPU ante cualquier error; PHOTOED_GPU=0 la apaga. El repo es
+  público: el camino CPU es el de referencia y debe seguir funcionando.
+- Timelapse usa h264_nvenc si el ffmpeg lo trae y funciona; si no, libx264.
+- /api/health informa de gpu y threads.
+
 ## Comandos
 
 - Engine: `uv sync` / `uv run python -m photoeditor` (desde `engine/`; en esta

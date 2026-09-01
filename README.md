@@ -54,6 +54,21 @@ cd engine && uv sync && uv run python -m photoeditor   # API en :8177
 cd app && corepack pnpm install && corepack pnpm dev   # UI en :5173
 ```
 
+## Rendimiento: CPU por defecto, GPU opcional
+
+El camino de referencia es CPU y funciona en cualquier máquina; la
+decodificación RAW va en hilos (`PHOTOED_THREADS`, por defecto la mitad de
+los lógicos, tope 4). Con una NVIDIA se puede activar CuPy para el apilado
+sigma-clip, la detección de estrellas y la parte tonal del revelado —
+todo cae a CPU solo ante cualquier fallo:
+
+```
+cd engine && uv sync --extra gpu   # CuPy + librerías CUDA en wheels de pip (sin CUDA Toolkit)
+```
+
+`PHOTOED_GPU=0` la desactiva; `GET /api/health` dice si está activa. El
+timelapse usa NVENC cuando el ffmpeg embebido y el driver lo permiten.
+
 ## Uso normal
 
 ```bash

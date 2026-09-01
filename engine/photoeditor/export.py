@@ -111,12 +111,16 @@ def job_fn(photo_ids: list[int], preset_name: str, force: bool = False):
     def run(job: dict) -> dict:
         from . import scan
 
+        from . import gpu
+        from .parallel import prefetch, workers
+
         con = db.connect()
         touched: set[str] = set()
         results: list[dict] = []
         try:
             root = config.get_root()
             job["progress"]["total"] = len(photo_ids)
+            rows = []
             for pid in photo_ids:
                 row = con.execute(
                     """SELECT p.stem, p.ext, f.name AS folder FROM photos p
@@ -127,18 +131,23 @@ def job_fn(photo_ids: list[int], preset_name: str, force: bool = False):
                     results.append(
                         {"stem": f"id {pid}", "ok": False, "error": "no está en el catálogo"}
                     )
+                    job["progress"]["done"] += 1
                 else:
-                    job["progress"]["current"] = row["stem"]
-                    try:
-                        res = _export_one(root, row, preset_name, force)
-                    except Exception as exc:
-                        res = {"stem": row["stem"], "ok": False, "error": str(exc)}
-                    results.append(res)
-                    if res.get("ok"):
-                        touched.add(row["folder"])
-                        if PRESETS[preset_name]["dest"] == "favs":
-                            touched.add(FAVS_DIR)
+                    rows.append(row)
+            # revelados en paralelo (decode en hilos; la GPU, si la hay, serializa sola)
+            for row, res in prefetch(
+                rows, lambda r: _export_one(root, r, preset_name, force), window=min(3, workers())
+            ):
+                job["progress"]["current"] = row["stem"]
+                if isinstance(res, Exception):
+                    res = {"stem": row["stem"], "ok": False, "error": str(res)}
+                results.append(res)
+                if res.get("ok"):
+                    touched.add(row["folder"])
+                    if PRESETS[preset_name]["dest"] == "favs":
+                        touched.add(FAVS_DIR)
                 job["progress"]["done"] += 1
+            gpu.release()
             # re-indexar las carpetas con archivos nuevos
             for name in touched:
                 d = root / name

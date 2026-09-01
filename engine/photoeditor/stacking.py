@@ -33,6 +33,7 @@ import math
 import shutil
 import uuid
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 
@@ -44,8 +45,9 @@ try:
 except Exception:  # opcional: sin él queda el fallback NN+RANSAC
     _aa = None
 
-from . import config, db, develop, naming
+from . import config, db, develop, gpu, naming
 from .export import _save_jpg, _save_tif16
+from .parallel import prefetch, workers
 
 MODES = ("luna", "estrellas", "media", "max", "trails", "hdr")
 _LABEL = {
@@ -115,6 +117,11 @@ def _detect_stars(
     locales. Devuelve (x, y) ordenadas por respuesta. Verificado: ~90 % de
     repetibilidad entre frames consecutivos en las Perseidas urbanas."""
     s = 1.0 if half else 2.0
+    if gpu.AVAILABLE:
+        try:
+            return _detect_stars_gpu(gray, excl, s, cap)
+        except Exception:
+            gpu.release()  # VRAM u otro: camino CPU
     d = cv2.GaussianBlur(gray, (0, 0), s) - cv2.GaussianBlur(gray, (0, 0), 3 * s)
     if excl is not None and excl.shape == d.shape:
         d[excl > 0] = 0
@@ -143,6 +150,25 @@ def _quick_votes(a: np.ndarray, b: np.ndarray, max_shift: float = 500.0) -> int:
         d[:, 0], d[:, 1], bins=bins, range=[[-max_shift, max_shift], [-max_shift, max_shift]]
     )
     return int(H.max())
+
+
+def _detect_stars_gpu(
+    gray: np.ndarray, excl: np.ndarray | None, s: float, cap: int
+) -> np.ndarray:
+    """Misma detección que la CPU, en CuPy (gaussian_filter con truncate=3
+    para parecerse al kernel de OpenCV)."""
+    cp, ndi = gpu.cp, gpu.ndi
+    g = cp.asarray(gray, dtype=cp.float32)
+    d = ndi.gaussian_filter(g, s, truncate=3.0) - ndi.gaussian_filter(g, 3 * s, truncate=3.0)
+    if excl is not None and excl.shape == d.shape:
+        d[cp.asarray(excl) > 0] = 0
+    mad = float(cp.median(cp.abs(d))) + 1e-3
+    peaks = (d == ndi.maximum_filter(d, size=5)) & (d > 8.0 * mad)
+    ys, xs = cp.nonzero(peaks)
+    if int(xs.size) == 0:
+        return np.empty((0, 2), np.float32)
+    order = cp.argsort(-d[ys, xs])[:cap]
+    return cp.asnumpy(cp.stack([xs[order], ys[order]]).T).astype(np.float32)
 
 
 def _pair_transform(
@@ -280,7 +306,36 @@ def _apply_gain(img16: np.ndarray, gain: float) -> np.ndarray:
     return (np.clip(out, 0, 1) * 65535 + 0.5).astype(np.uint16)
 
 
+def _sigma_clip_gpu(files: list[Path], H: int, W: int) -> np.ndarray:
+    """Sigma-clip en CuPy: los frames suben en uint16 (mitad de transferencia)
+    y se convierten en la GPU; rodajas de ~400 MB de VRAM."""
+    cp = gpu.cp
+    mms = [np.load(f, mmap_mode="r") for f in files]
+    res = np.zeros((H, W, 3), np.float32)
+    n = len(mms)
+    SL = max(8, int(400_000_000 / max(1, W * 3 * 4 * n)))
+    for y in range(0, H, SL):
+        sl = cp.stack([cp.asarray(np.ascontiguousarray(m[y : y + SL])) for m in mms]).astype(
+            cp.float32
+        )
+        mu = sl.mean(0)
+        sd = sl.std(0) + 1e-3
+        for _ in range(2):
+            mask = cp.abs(sl - mu) < 2.5 * sd
+            c = mask.sum(0).clip(1)
+            mu = cp.where(mask, sl, 0).sum(0) / c
+            sd = cp.sqrt(cp.where(mask, (sl - mu) ** 2, 0).sum(0) / c) + 1e-3
+        res[y : y + SL] = cp.asnumpy(mu)
+        del sl, mask, mu, sd, c
+    return res
+
+
 def _sigma_clip_stack(files: list[Path], H: int, W: int) -> np.ndarray:
+    if gpu.AVAILABLE:
+        try:
+            return _sigma_clip_gpu(files, H, W)
+        except Exception:
+            gpu.release()  # sin VRAM suficiente u otro: camino CPU
     mms = [np.load(f, mmap_mode="r") for f in files]
     res = np.zeros((H, W, 3), np.float32)
     n = len(mms)
@@ -380,11 +435,11 @@ def job_fn(photo_ids: list[int], mode: str, crop_px: int = 1200,
             (reencuadres con giro de cámara) rompería la mediana."""
             job["progress"]["current"] = "patrón fijo"
             idxs = sorted({0, len(rows) // 4, len(rows) // 2, 3 * len(rows) // 4, len(rows) - 1})
-            spread = [
-                _gray16f(develop.decode(_src(rows[i]), half=half))
-                for i in idxs
-                if _src(rows[i]).exists()
-            ]
+            idxs = [i for i in idxs if _src(rows[i]).exists()]
+            with ThreadPoolExecutor(max_workers=workers()) as ex:
+                spread = list(
+                    ex.map(lambda i: _gray16f(develop.decode(_src(rows[i]), half=half)), idxs)
+                )
             if len(spread) < 3:
                 return None
             dom = Counter(g.shape for g in spread).most_common(1)[0][0]
@@ -393,15 +448,18 @@ def job_fn(photo_ids: list[int], mode: str, crop_px: int = 1200,
                 return None
             return _exclusion_mask(np.median(np.stack(same), axis=0).astype(np.float32), half)
 
+        def _decode_norm(r):
+            """Decodifica (en hilos vía prefetch) y ecualiza exposición."""
+            if not _src(r).exists():
+                raise ValueError("no está en disco")
+            img = develop.decode(_src(r), half=half)
+            return _apply_gain(img, gains.get(r["stem"], 1.0))
+
         try:
             npys: list[Path] = []
 
             if mode == "estrellas":
                 excl = _fixed_mask()
-
-                def _decode_norm(r):
-                    img = develop.decode(_src(r), half=half)
-                    return _apply_gain(img, gains.get(r["stem"], 1.0))
 
                 def _pass(seg_rows):
                     """Cadena anclada al medio del segmento + refinamiento absoluto.
@@ -427,12 +485,11 @@ def job_fn(photo_ids: list[int], mode: str, crop_px: int = 1200,
                     job["progress"]["done"] += 1
                     for chain in (seg_rows[m0 + 1 :], seg_rows[m0 - 1 :: -1] if m0 > 0 else []):
                         prev_pts, t_prev = rpts, np.eye(3, dtype=np.float32)
-                        for r in chain:
+                        for r, img in prefetch(chain, _decode_norm):
                             job["progress"]["current"] = r["stem"]
                             try:
-                                if not _src(r).exists():
-                                    raise ValueError("no está en disco")
-                                img = _decode_norm(r)
+                                if isinstance(img, Exception):
+                                    raise img
                                 pts = _detect_stars(_gray16f(img), excl, half)
                                 M, n, kind = _pair_transform(prev_pts, pts)
                                 t_total = _compose(t_prev, M)
@@ -461,10 +518,11 @@ def job_fn(photo_ids: list[int], mode: str, crop_px: int = 1200,
                 still: list = []
                 if pend:
                     job["progress"]["total"] += len(pend)
-                    for r, _why in pend:
+                    for r, img in prefetch([p[0] for p in pend], _decode_norm):
                         job["progress"]["current"] = f"{r['stem']} (directo)"
                         try:
-                            img = _decode_norm(r)
+                            if isinstance(img, Exception):
+                                raise img
                             pts = _detect_stars(_gray16f(img), excl, half)
                             M, _n, _kind = _pair_transform(ref_pts_a, pts)
                             t_total = np.vstack([M, [0, 0, 1]]).astype(np.float32)
@@ -540,15 +598,11 @@ def job_fn(photo_ids: list[int], mode: str, crop_px: int = 1200,
                 rellenos = 0
                 sin_relleno: list[str] = []
                 ident = np.float32([[1, 0, 0], [0, 1, 0]])
-                for r in rows:
+                for r, img in prefetch(rows, _decode_norm):
                     job["progress"]["current"] = r["stem"]
                     try:
-                        src_path = _src(r)
-                        if not src_path.exists():
-                            raise ValueError("no está en disco")
-                        img = _apply_gain(
-                            develop.decode(src_path, half=half), gains.get(r["stem"], 1.0)
-                        )
+                        if isinstance(img, Exception):
+                            raise img
                         pts = _detect_stars(_gray16f(img), excl, half)
                         if acc is None:
                             acc = img.copy()
@@ -596,15 +650,12 @@ def job_fn(photo_ids: list[int], mode: str, crop_px: int = 1200,
                 hdr_frames: list[tuple[float, np.ndarray]] = []
                 ref_crop_gray = None
                 win = None
-                for r in rows:
+                for r, img in prefetch(rows, _decode_norm):
                     job["progress"]["current"] = r["stem"]
                     src_path = _src(r)
                     try:
-                        if not src_path.exists():
-                            raise ValueError("no está en disco")
-                        img = develop.decode(src_path, half=half)
-                        if mode in ("luna", "media"):
-                            img = _apply_gain(img, gains.get(r["stem"], 1.0))
+                        if isinstance(img, Exception):
+                            raise img
 
                         if mode == "luna":
                             cx, cy = _moon_centroid(img)
@@ -709,5 +760,6 @@ def job_fn(photo_ids: list[int], mode: str, crop_px: int = 1200,
             return info
         finally:
             shutil.rmtree(work, ignore_errors=True)
+            gpu.release()
 
     return run
