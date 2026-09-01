@@ -70,7 +70,8 @@ def _scan_folder(con, folder: Path) -> None:
             """INSERT INTO photos(folder_id, stem, ext, bytes, mtime, taken_at)
                VALUES(?,?,?,?,?,?)
                ON CONFLICT(folder_id, stem, ext) DO UPDATE
-               SET bytes=excluded.bytes, mtime=excluded.mtime, taken_at=excluded.taken_at""",
+               SET bytes=excluded.bytes, mtime=excluded.mtime, taken_at=excluded.taken_at,
+                   sharp=NULL, clip_hi=NULL, clip_lo=NULL, bright=NULL, metrics_at=NULL""",
             (fid, f.stem, ext, st.st_size, st.st_mtime, _taken_at(f)),
         )
     for key, row in known.items():
@@ -80,7 +81,7 @@ def _scan_folder(con, folder: Path) -> None:
     con.execute("UPDATE photos SET rating=NULL WHERE folder_id=?", (fid,))
     for sc in folder.glob("*.xmp"):
         r = xmp.read_rating(sc)
-        if r is not None:
+        if r is not None and r > 0:  # 0 = sin puntuar, igual que Lightroom
             con.execute(
                 "UPDATE photos SET rating=? WHERE folder_id=? AND stem=?", (r, fid, sc.stem)
             )

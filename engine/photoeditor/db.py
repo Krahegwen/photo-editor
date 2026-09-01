@@ -19,10 +19,18 @@ CREATE TABLE IF NOT EXISTS photos(
     mtime REAL NOT NULL,
     taken_at TEXT,
     rating INTEGER,
+    sharp REAL,
+    clip_hi REAL,
+    clip_lo REAL,
+    bright REAL,
+    metrics_at REAL,
     UNIQUE(folder_id, stem, ext)
 );
 CREATE INDEX IF NOT EXISTS idx_photos_folder ON photos(folder_id);
 """
+
+# Columnas añadidas después de F0: se aplican a bases ya creadas.
+_MIGRATIONS = ("sharp REAL", "clip_hi REAL", "clip_lo REAL", "bright REAL", "metrics_at REAL")
 
 
 def connect() -> sqlite3.Connection:
@@ -32,4 +40,8 @@ def connect() -> sqlite3.Connection:
     con.execute("PRAGMA journal_mode=WAL")
     con.execute("PRAGMA foreign_keys=ON")
     con.executescript(SCHEMA)
+    cols = {r[1] for r in con.execute("PRAGMA table_info(photos)")}
+    for col in _MIGRATIONS:
+        if col.split()[0] not in cols:
+            con.execute(f"ALTER TABLE photos ADD COLUMN {col}")
     return con

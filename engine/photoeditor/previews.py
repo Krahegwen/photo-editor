@@ -1,18 +1,22 @@
 """Previews con caché persistente (port de extract2.py del flujo previo).
 
-Para ARW se usa el JPEG incrustado (extract_thumb): rápido, sin demosaico.
-La caché va por tamaño y se invalida sola al cambiar el mtime del original.
+Tamaños: 320 (rejilla) y 1600 (lupa) salen del JPEG incrustado del ARW —
+rápido, sin demosaico. 3000 (≈50 %) usa revelado half_size y 6000 (1:1)
+revelado completo, con los mismos parámetros de decodificación del flujo
+previo para que el look sea consistente. La caché va por tamaño y se
+invalida sola al cambiar el mtime del original.
 """
 import hashlib
 import io
 from pathlib import Path
+from uuid import uuid4
 
 import rawpy
 from PIL import Image, ImageOps
 
 from . import config
 
-SIZES = (320, 1600)
+SIZES = (320, 1600, 3000, 6000)
 
 
 def _cache_path(rel: str, mtime: float, size: int) -> Path:
@@ -22,18 +26,27 @@ def _cache_path(rel: str, mtime: float, size: int) -> Path:
     return p
 
 
-def _load_image(path: Path) -> Image.Image:
+def _load_image(path: Path, size: int) -> Image.Image:
     if path.suffix.lower() == ".arw":
         with rawpy.imread(str(path)) as raw:
-            try:
-                th = raw.extract_thumb()
-            except Exception:
-                th = None
+            th = None
+            if size <= 1600:
+                try:
+                    th = raw.extract_thumb()
+                except Exception:
+                    th = None
             if th is not None and th.format == rawpy.ThumbFormat.JPEG:
                 return ImageOps.exif_transpose(Image.open(io.BytesIO(th.data)))
             if th is not None:
                 return Image.fromarray(th.data)
-            rgb = raw.postprocess(use_camera_wb=True, half_size=True, output_bps=8)
+            rgb = raw.postprocess(
+                use_camera_wb=True,
+                no_auto_bright=True,
+                gamma=(2.222, 4.5),
+                output_color=rawpy.ColorSpace.sRGB,
+                output_bps=8,
+                half_size=size <= 3000,
+            )
             return Image.fromarray(rgb)
     try:
         return ImageOps.exif_transpose(Image.open(path))
@@ -52,9 +65,9 @@ def get_preview(abs_path: Path, rel: str, mtime: float, size: int) -> Path:
     out = _cache_path(rel, mtime, size)
     if out.exists():
         return out
-    im = _load_image(abs_path).convert("RGB")
+    im = _load_image(abs_path, size).convert("RGB")
     im.thumbnail((size, size), Image.Resampling.LANCZOS)
-    tmp = out.with_suffix(".tmp")
-    im.save(tmp, "JPEG", quality=85)
+    tmp = out.with_name(f"{out.stem}.{uuid4().hex[:8]}.tmp")
+    im.save(tmp, "JPEG", quality=85 if size <= 1600 else 90)
     tmp.replace(out)
     return out

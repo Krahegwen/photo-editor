@@ -1,4 +1,4 @@
-# Arranca el motor de photo-editor (sirviendo app/dist) y abre el navegador.
+# Arranca el motor de photo-editor (sirviendo app/dist) y abre la UI en Brave.
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path $PSScriptRoot -Parent
 $py = Join-Path $repo 'engine\.venv\Scripts\python.exe'
@@ -14,4 +14,12 @@ if (-not $up) {
     try { Invoke-RestMethod "http://127.0.0.1:$port/api/health" -TimeoutSec 2 | Out-Null; break } catch {}
   }
 }
-Start-Process "http://127.0.0.1:$port/"
+
+# Brave en ventana de aplicación; si no está, el navegador predeterminado.
+$brave = @(
+  "$env:ProgramFiles\BraveSoftware\Brave-Browser\Application\brave.exe",
+  "${env:ProgramFiles(x86)}\BraveSoftware\Brave-Browser\Application\brave.exe",
+  "$env:LOCALAPPDATA\BraveSoftware\Brave-Browser\Application\brave.exe"
+) | Where-Object { Test-Path $_ } | Select-Object -First 1
+if ($brave) { Start-Process -FilePath $brave -ArgumentList "--app=http://127.0.0.1:$port/" }
+else { Start-Process "http://127.0.0.1:$port/" }
