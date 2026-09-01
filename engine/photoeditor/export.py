@@ -11,8 +11,6 @@ JPG de cámara u exportaciones previas). El render usa la receta si existe;
 sin receta exporta el revelado base (WB de cámara).
 """
 import shutil
-import threading
-import time
 from pathlib import Path
 
 import cv2
@@ -32,19 +30,6 @@ PRESETS: dict[str, dict] = {
         "dest": "_impresion", "dpi": 300,
     },
 }
-
-state: dict = {
-    "running": False,
-    "preset": None,
-    "done": 0,
-    "total": 0,
-    "current": None,
-    "results": [],
-    "error": None,
-    "finished_at": None,
-}
-_lock = threading.Lock()
-
 
 def _resize_long(img: np.ndarray, long_px: int | None) -> np.ndarray:
     if not long_px:
@@ -118,55 +103,49 @@ def _export_one(root: Path, row, preset_name: str, force: bool) -> dict:
     return {"stem": stem, "ok": True, "written": written}
 
 
-def _thread(photo_ids: list[int], preset_name: str, force: bool) -> None:
-    from . import scan
-
-    con = db.connect()
-    touched: set[str] = set()
-    try:
-        root = config.get_root()
-        state["total"] = len(photo_ids)
-        for pid in photo_ids:
-            row = con.execute(
-                """SELECT p.stem, p.ext, f.name AS folder FROM photos p
-                   JOIN folders f ON f.id = p.folder_id WHERE p.id=?""",
-                (pid,),
-            ).fetchone()
-            if row is None:
-                state["results"].append({"stem": f"id {pid}", "ok": False, "error": "no está en el catálogo"})
-            else:
-                state["current"] = row["stem"]
-                try:
-                    res = _export_one(root, row, preset_name, force)
-                except Exception as exc:
-                    res = {"stem": row["stem"], "ok": False, "error": str(exc)}
-                state["results"].append(res)
-                if res.get("ok"):
-                    touched.add(row["folder"])
-                    if PRESETS[preset_name]["dest"] == "favs":
-                        touched.add(FAVS_DIR)
-            state["done"] += 1
-        # re-indexar las carpetas con archivos nuevos
-        for name in touched:
-            d = root / name
-            if d.is_dir():
-                scan._scan_folder(con, d)
-    except Exception as exc:
-        state["error"] = str(exc)
-    finally:
-        state.update(running=False, current=None, finished_at=time.time())
-        con.close()
-
-
-def run(photo_ids: list[int], preset_name: str, force: bool = False) -> bool:
+def job_fn(photo_ids: list[int], preset_name: str, force: bool = False):
+    """Función de trabajo para la cola (jobs.submit)."""
     if preset_name not in PRESETS:
         raise ValueError(f"Preset desconocido: {preset_name}")
-    with _lock:
-        if state["running"]:
-            return False
-        state.update(
-            running=True, preset=preset_name, done=0, total=0,
-            current=None, results=[], error=None, finished_at=None,
-        )
-    threading.Thread(target=_thread, args=(photo_ids, preset_name, force), daemon=True).start()
-    return True
+
+    def run(job: dict) -> dict:
+        from . import scan
+
+        con = db.connect()
+        touched: set[str] = set()
+        results: list[dict] = []
+        try:
+            root = config.get_root()
+            job["progress"]["total"] = len(photo_ids)
+            for pid in photo_ids:
+                row = con.execute(
+                    """SELECT p.stem, p.ext, f.name AS folder FROM photos p
+                       JOIN folders f ON f.id = p.folder_id WHERE p.id=?""",
+                    (pid,),
+                ).fetchone()
+                if row is None:
+                    results.append(
+                        {"stem": f"id {pid}", "ok": False, "error": "no está en el catálogo"}
+                    )
+                else:
+                    job["progress"]["current"] = row["stem"]
+                    try:
+                        res = _export_one(root, row, preset_name, force)
+                    except Exception as exc:
+                        res = {"stem": row["stem"], "ok": False, "error": str(exc)}
+                    results.append(res)
+                    if res.get("ok"):
+                        touched.add(row["folder"])
+                        if PRESETS[preset_name]["dest"] == "favs":
+                            touched.add(FAVS_DIR)
+                job["progress"]["done"] += 1
+            # re-indexar las carpetas con archivos nuevos
+            for name in touched:
+                d = root / name
+                if d.is_dir():
+                    scan._scan_folder(con, d)
+        finally:
+            con.close()
+        return {"preset": preset_name, "results": results}
+
+    return run

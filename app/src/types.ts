@@ -23,22 +23,41 @@ export interface Photo {
   has_recipe: boolean
 }
 
-export interface ScanState {
-  running: boolean
-  folder: string | null
+export interface JobProgress {
   done: number
   total: number
-  error: string | null
-  finished_at: number | null
+  current: string | null
 }
 
-export interface MetricsState {
-  running: boolean
-  folder_id: number | null
-  done: number
-  total: number
+export interface Job {
+  id: string
+  kind: string
+  title: string
+  state: 'queued' | 'running' | 'done' | 'error'
+  progress: JobProgress
+  result: unknown
   error: string | null
-  finished_at: number | null
+  created: number
+  started: number | null
+  finished: number | null
+}
+
+export interface CloseReportItem {
+  stem: string
+  id: number
+  motivo: string
+}
+
+export interface CloseReport {
+  folder_id: number
+  folder: string
+  borrar: CloseReportItem[]
+  pendientes: string[]
+  tiff_sin_favs: string[]
+  finales: number
+  total_fotos: number
+  trashed?: string[]
+  errors?: string[]
 }
 
 export interface Health {
@@ -105,17 +124,6 @@ export interface ExportResult {
   ok: boolean
   error?: string
   written?: string[]
-}
-
-export interface ExportState {
-  running: boolean
-  preset: string | null
-  done: number
-  total: number
-  current: string | null
-  results: ExportResult[]
-  error: string | null
-  finished_at: number | null
 }
 
 export type FilterKey = 'all' | 'unrated' | 'best' | 'discard' | 'suspect'

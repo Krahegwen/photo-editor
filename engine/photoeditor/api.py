@@ -1,7 +1,6 @@
 """API REST local. La UI Vue habla con esto; en F3 el servidor MCP también."""
 import base64
 import datetime as dt
-import json
 import time
 from pathlib import Path
 
@@ -11,7 +10,20 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import __version__, config, db, develop, export, metrics, previews, scan, xmp
+from . import (
+    __version__,
+    closefolder,
+    config,
+    db,
+    develop,
+    export,
+    jobs,
+    metrics,
+    previews,
+    scan,
+    trash,
+    xmp,
+)
 
 app = FastAPI(title="photo-editor engine", version=__version__)
 app.add_middleware(
@@ -66,6 +78,11 @@ class ExportRequest(BaseModel):
     photo_ids: list[int]
     preset: str
     force: bool = False
+
+
+class CloseFolderRequest(BaseModel):
+    folder_id: int
+    execute: bool = False
 
 
 # ---------------------------------------------------------------- estado
@@ -307,32 +324,21 @@ def set_rating(req: RatingRequest):
 
 @app.post("/api/metrics", status_code=202)
 def start_metrics(req: MetricsRequest):
-    if not metrics.run(req.folder_id):
-        raise HTTPException(409, "Ya hay un análisis en marcha")
-    return {"started": True}
-
-
-@app.get("/api/metrics/status")
-def metrics_status():
-    return metrics.state
+    con = db.connect()
+    try:
+        row = con.execute("SELECT name FROM folders WHERE id=?", (req.folder_id,)).fetchone()
+    finally:
+        con.close()
+    if row is None:
+        raise HTTPException(404, "Carpeta no encontrada")
+    return jobs.submit("metrics", f"Nitidez · {row['name']}", metrics.job_fn(req.folder_id))
 
 
 # ---------------------------------------------------------------- borrado
 
 
-def _audit(action: str, items: list[str]) -> None:
-    line = json.dumps(
-        {"ts": time.strftime("%Y-%m-%d %H:%M:%S"), "action": action, "items": items},
-        ensure_ascii=False,
-    )
-    with open(config.APP_DIR / "deletions.log", "a", encoding="utf-8") as fh:
-        fh.write(line + "\n")
-
-
 @app.post("/api/delete")
 def delete_photos(req: DeleteRequest):
-    from send2trash import send2trash
-
     root = config.get_root()
     con = db.connect()
     trashed, errors = [], []
@@ -344,28 +350,11 @@ def delete_photos(req: DeleteRequest):
             except HTTPException:
                 errors.append(f"id {pid}: no está en el catálogo")
                 continue
-            rel = f"{row['folder']}/{row['stem']}{row['ext']}"
             try:
-                fpath = root / row["folder"] / (row["stem"] + row["ext"])
-                if fpath.exists():
-                    send2trash(str(fpath))
-                # el sidecar solo se va si ninguna otra foto comparte el stem
-                others = con.execute(
-                    "SELECT COUNT(*) FROM photos WHERE folder_id=? AND stem=? AND id<>?",
-                    (row["folder_id"], row["stem"], pid),
-                ).fetchone()[0]
-                sidecar = root / row["folder"] / (row["stem"] + ".xmp")
-                if others == 0 and sidecar.exists():
-                    send2trash(str(sidecar))
-                recipe = root / row["folder"] / (row["stem"] + ".pe.json")
-                if others == 0 and recipe.exists():
-                    send2trash(str(recipe))
-                con.execute("DELETE FROM photos WHERE id=?", (pid,))
-                con.commit()
+                trashed += trash.trash_photo(con, root, row)
                 touched.add(row["folder_id"])
-                trashed.append(rel)
             except Exception as exc:
-                errors.append(f"{rel}: {exc}")
+                errors.append(f"{row['folder']}/{row['stem']}{row['ext']}: {exc}")
         for fid in touched:
             con.execute(
                 "UPDATE folders SET photo_count="
@@ -375,8 +364,7 @@ def delete_photos(req: DeleteRequest):
         con.commit()
     finally:
         con.close()
-    if trashed:
-        _audit("papelera", trashed)
+    trash.audit("papelera", trashed)
     return {"trashed": trashed, "errors": errors}
 
 
@@ -471,14 +459,44 @@ def delete_recipe(photo_id: int):
 def start_export(req: ExportRequest):
     if req.preset not in export.PRESETS:
         raise HTTPException(400, f"Preset desconocido: {req.preset}")
-    if not export.run(req.photo_ids, req.preset, req.force):
-        raise HTTPException(409, "Ya hay una exportación en marcha")
-    return {"started": True}
+    return jobs.submit(
+        "export",
+        f"Exportar {len(req.photo_ids)} · {req.preset}",
+        export.job_fn(req.photo_ids, req.preset, req.force),
+    )
 
 
-@app.get("/api/export/status")
-def export_status():
-    return export.state
+# ---------------------------------------------------------------- cerrar carpeta
+
+
+@app.post("/api/close_folder")
+def close_folder(req: CloseFolderRequest):
+    try:
+        report = closefolder.analyze(req.folder_id)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    if not req.execute:
+        return {"report": report, "job": None}
+    job = jobs.submit(
+        "close", f"Cerrar {report['folder']}", closefolder.job_fn(req.folder_id)
+    )
+    return {"report": report, "job": job}
+
+
+# ---------------------------------------------------------------- trabajos
+
+
+@app.get("/api/jobs")
+def list_jobs(limit: int = 20):
+    return jobs.recent(limit)
+
+
+@app.get("/api/jobs/{job_id}")
+def get_job(job_id: str):
+    j = jobs.get(job_id)
+    if j is None:
+        raise HTTPException(404, "Trabajo no encontrado (el historial es del proceso actual)")
+    return j
 
 
 # ---------------------------------------------------------------- escaneo
@@ -486,14 +504,9 @@ def export_status():
 
 @app.post("/api/scan", status_code=202)
 def start_scan(req: ScanRequest | None = None):
-    if not scan.run_scan(req.folders if req else None):
-        raise HTTPException(409, "Ya hay un escaneo en marcha")
-    return {"started": True}
-
-
-@app.get("/api/scan/status")
-def scan_status():
-    return scan.state
+    only = req.folders if req else None
+    title = f"Escanear {len(only)} carpetas" if only else "Escanear archivo"
+    return jobs.submit("scan", title, scan.job_fn(only))
 
 
 _dist = Path(__file__).resolve().parents[2] / "app" / "dist"

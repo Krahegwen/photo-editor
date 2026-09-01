@@ -2,7 +2,14 @@
 
 App local que sustituye Lightroom/Photoshop para el flujo del usuario (cribar →
 puntuar → revelar ARW → apilar astro → exportar). Plan por fases: F0 cimientos ✔,
-F1 cribado ✔, F2 revelado ✔, F3 MCP+jobs (siguiente), F4 astro, F5 extras.
+F1 cribado ✔, F2 revelado ✔, F3 MCP+jobs ✔, F4 astro (siguiente), F5 extras.
+
+Notas F3: cola secuencial en `jobs.py` (registro en memoria, /api/jobs);
+escaneo/métricas/export/cerrar-carpeta son jobs. `mcp_server.py` = cliente
+httpx sobre la API (mcp 2.x: MCPServer, ToolError; NO FastMCP). El motor corre
+desacoplado (launcher escribe el PID en %LOCALAPPDATA%\photo-editor\engine.pid);
+tras cambiar código del engine hay que reiniciar ese proceso. `borrar_fotos` y
+`cerrar_carpeta` vía MCP son dry-run salvo confirmación explícita de Diego.
 
 Notas F2: receta JSON en sidecar `<stem>.pe.json` (compartida por stem);
 pipeline en `develop.py` con curvas heurísticas v1 — se afinan con feedback

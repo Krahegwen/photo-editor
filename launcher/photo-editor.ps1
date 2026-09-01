@@ -8,7 +8,10 @@ $port = if ($env:PHOTOED_PORT) { $env:PHOTOED_PORT } else { 8177 }
 $up = $false
 try { Invoke-RestMethod "http://127.0.0.1:$port/api/health" -TimeoutSec 2 | Out-Null; $up = $true } catch {}
 if (-not $up) {
-  Start-Process -FilePath $py -ArgumentList '-m', 'photoeditor' -WorkingDirectory $repo -WindowStyle Hidden
+  $proc = Start-Process -FilePath $py -ArgumentList '-m', 'photoeditor' -WorkingDirectory $repo -WindowStyle Hidden -PassThru
+  $appdir = Join-Path $env:LOCALAPPDATA 'photo-editor'
+  New-Item -ItemType Directory -Force $appdir | Out-Null
+  $proc.Id | Set-Content (Join-Path $appdir 'engine.pid')
   foreach ($i in 1..30) {
     Start-Sleep -Milliseconds 500
     try { Invoke-RestMethod "http://127.0.0.1:$port/api/health" -TimeoutSec 2 | Out-Null; break } catch {}

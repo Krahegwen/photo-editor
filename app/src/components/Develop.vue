@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, toRaw, watch } from 'vue'
 import { api } from '../api'
-import type { CropBox, Hist, Photo, PresetKey, Recipe } from '../types'
+import type { CropBox, ExportResult, Hist, Photo, PresetKey, Recipe } from '../types'
 
 const props = defineProps<{ photo: Photo }>()
 const emit = defineEmits<{ close: []; copy: [recipe: Recipe] }>()
@@ -293,18 +293,19 @@ async function exportThis() {
   exporting.value = 'exportando…'
   try {
     await saveNow()
-    await api.export([props.photo.id], exportPreset.value)
+    const job = await api.export([props.photo.id], exportPreset.value)
     for (;;) {
       await new Promise((r) => setTimeout(r, 800))
-      const s = await api.exportStatus()
-      if (!s.running) {
-        const r0 = s.results[0]
-        exporting.value = r0?.ok
-          ? `✔ ${r0.written?.join(' · ')}`
-          : `✖ ${r0?.error ?? s.error ?? 'error'}`
+      const j = await api.job(job.id)
+      if (j.state === 'done' || j.state === 'error') {
+        const res = (j.result as { results?: ExportResult[] } | null)?.results?.[0]
+        exporting.value =
+          j.state === 'done' && res?.ok
+            ? `✔ ${res.written?.join(' · ')}`
+            : `✖ ${res?.error ?? j.error ?? 'error'}`
         break
       }
-      exporting.value = `exportando… ${s.done}/${s.total}`
+      exporting.value = j.state === 'queued' ? 'en cola…' : 'exportando…'
     }
   } catch (e) {
     exporting.value = `✖ ${e}`

@@ -4,8 +4,9 @@ Editor fotográfico local para sustituir Lightroom/Photoshop en mi flujo real:
 cribar, puntuar, revelar RAW (Sony ARW), apilar astro y exportar — con API REST
 y, más adelante, servidor MCP para que Claude opere el mismo motor.
 
-**Estado: F0 (cimientos)** — catálogo SQLite, previews con caché y rejilla en el
-navegador. Fases siguientes: F1 cribado · F2 revelado · F3 MCP · F4 astro.
+**Estado: F0–F3 completadas** — catálogo, cribado (rating XMP, métricas de
+nitidez, borrado a papelera), revelado no destructivo con exportación por
+presets, cola de trabajos y servidor MCP. Siguiente: F4 astro (apilados).
 
 ## Arquitectura
 
@@ -25,6 +26,25 @@ se modifican jamás.
 Raíz del archivo de fotos: variable de entorno `PHOTOED_ROOT`, o clave `root`
 en `%LOCALAPPDATA%\photo-editor\config.json`. Puerto: `PHOTOED_PORT` (8177 por
 defecto).
+
+## MCP (Claude Desktop / Claude Code)
+
+`engine/photoeditor/mcp_server.py` expone las mismas operaciones que la UI
+como tools MCP (stdio), hablando con la API del motor (`PHOTOED_URL`, por
+defecto `127.0.0.1:8177`). Config para Claude Desktop:
+
+```json
+"photo-editor": {
+  "command": "<repo>\\engine\\.venv\\Scripts\\python.exe",
+  "args": ["-m", "photoeditor.mcp_server"]
+}
+```
+
+Tools: estado, listar_carpetas, listar_fotos, ver_foto, hoja_contactos,
+puntuar, sugerir_descartes, borrar_fotos (dry-run salvo confirmado), receta,
+aplicar_receta, exportar, cerrar_carpeta (dry-run salvo ejecutar), escanear,
+estado_trabajo. Los trabajos largos van a una cola secuencial (`/api/jobs`)
+compartida entre la UI y el MCP.
 
 ## Desarrollo
 

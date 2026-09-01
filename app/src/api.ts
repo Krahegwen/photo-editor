@@ -1,14 +1,13 @@
 import type {
+  CloseReport,
   Exif,
-  ExportState,
   Folder,
   Health,
-  MetricsState,
+  Job,
   Photo,
   PresetKey,
   PreviewResult,
   Recipe,
-  ScanState,
 } from './types'
 
 async function req<T>(url: string, init?: RequestInit): Promise<T> {
@@ -34,14 +33,20 @@ export const api = {
     post<{ results: { photo_id: number; ok: boolean; error?: string }[] }>('/api/rating', {
       items,
     }),
-  metrics: (folderId: number) =>
-    post<{ started: boolean }>('/api/metrics', { folder_id: folderId }),
-  metricsStatus: () => req<MetricsState>('/api/metrics/status'),
   del: (photoIds: number[]) =>
     post<{ trashed: string[]; errors: string[] }>('/api/delete', { photo_ids: photoIds }),
-  scan: (folders?: string[]) =>
-    post<{ started: boolean }>('/api/scan', folders ? { folders } : {}),
-  scanStatus: () => req<ScanState>('/api/scan/status'),
+
+  scan: (folders?: string[]) => post<Job>('/api/scan', folders ? { folders } : {}),
+  metrics: (folderId: number) => post<Job>('/api/metrics', { folder_id: folderId }),
+  export: (photoIds: number[], preset: PresetKey, force = false) =>
+    post<Job>('/api/export', { photo_ids: photoIds, preset, force }),
+  closeFolder: (folderId: number, execute = false) =>
+    post<{ report: CloseReport; job: Job | null }>('/api/close_folder', {
+      folder_id: folderId,
+      execute,
+    }),
+  jobs: (limit = 20) => req<Job[]>(`/api/jobs?limit=${limit}`),
+  job: (id: string) => req<Job>(`/api/jobs/${id}`),
 
   getRecipe: (photoId: number) =>
     req<{ recipe: Recipe | null; defaults: Recipe }>(`/api/develop/${photoId}`),
@@ -64,7 +69,4 @@ export const api = {
       '/api/develop/copy',
       { recipe, to_photo_ids: toPhotoIds, include_geometry: includeGeometry },
     ),
-  export: (photoIds: number[], preset: PresetKey, force = false) =>
-    post<{ started: boolean }>('/api/export', { photo_ids: photoIds, preset, force }),
-  exportStatus: () => req<ExportState>('/api/export/status'),
 }

@@ -1,28 +1,17 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { api } from './api'
+import CloseFolder from './components/CloseFolder.vue'
 import DeleteReview from './components/DeleteReview.vue'
 import Develop from './components/Develop.vue'
 import Loupe from './components/Loupe.vue'
 import PhotoCard from './components/PhotoCard.vue'
-import type {
-  ExportState,
-  FilterKey,
-  Folder,
-  Health,
-  MetricsState,
-  Photo,
-  PresetKey,
-  Recipe,
-  ScanState,
-} from './types'
+import type { FilterKey, Folder, Health, Job, Photo, PresetKey, Recipe } from './types'
 
 const health = ref<Health | null>(null)
 const folders = ref<Folder[]>([])
 const current = ref<Folder | null>(null)
 const photos = ref<Photo[]>([])
-const scan = ref<ScanState | null>(null)
-const metrics = ref<MetricsState | null>(null)
 const error = ref<string | null>(null)
 const notice = ref<string | null>(null)
 const loadingPhotos = ref(false)
@@ -32,17 +21,51 @@ const selIdx = ref(0)
 const loupeOpen = ref(false)
 const loupeIdx = ref(0)
 const deleteOpen = ref(false)
+const closeOpen = ref(false)
 const gridEl = ref<HTMLElement | null>(null)
 const loupeRef = ref<InstanceType<typeof Loupe> | null>(null)
 
 const developOpen = ref(false)
 const copiedRecipe = ref<Recipe | null>(null)
 const exportPreset = ref<PresetKey>('normal')
-const exportState = ref<ExportState | null>(null)
 
 const developPhoto = computed(() =>
   loupeOpen.value ? filtered.value[loupeIdx.value] : filtered.value[selIdx.value],
 )
+
+// ------------------------------------------------------------- trabajos
+
+const jobs = ref<Job[]>([])
+const activeJobs = computed(() =>
+  jobs.value.filter((j) => j.state === 'queued' || j.state === 'running'),
+)
+const runningKind = (kind: string) => activeJobs.value.some((j) => j.kind === kind)
+const runningJob = (kind: string) => activeJobs.value.find((j) => j.kind === kind)
+
+let jobsTimer: number | undefined
+let jobsWereActive = false
+
+async function refreshJobs() {
+  window.clearTimeout(jobsTimer)
+  try {
+    jobs.value = await api.jobs(8)
+  } catch {
+    return
+  }
+  if (activeJobs.value.length) {
+    jobsWereActive = true
+    jobsTimer = window.setTimeout(refreshJobs, 1200)
+  } else if (jobsWereActive) {
+    jobsWereActive = false
+    const failed = jobs.value.filter((j) => j.state === 'error').slice(0, 2)
+    if (failed.length) {
+      error.value = failed.map((j) => `${j.title}: ${j.error}`).join(' · ')
+    }
+    notice.value = 'Trabajos terminados'
+    await loadFolders()
+    await reloadPhotos()
+  }
+}
 
 // ------------------------------------------------------------- datos
 
@@ -144,51 +167,43 @@ async function markSuspects() {
   await reloadPhotos()
 }
 
-// ------------------------------------------------------------- métricas
+// ------------------------------------------------------------- acciones (jobs)
+
+async function startScan() {
+  error.value = null
+  try {
+    await api.scan()
+    await refreshJobs()
+  } catch (e) {
+    error.value = String(e)
+  }
+}
 
 async function startMetrics() {
   if (!current.value) return
   error.value = null
   try {
     await api.metrics(current.value.id)
-    await pollMetrics()
+    await refreshJobs()
   } catch (e) {
     error.value = String(e)
   }
 }
 
-async function pollMetrics() {
-  metrics.value = await api.metricsStatus()
-  if (metrics.value.running) {
-    window.setTimeout(pollMetrics, 1200)
-  } else if (metrics.value.finished_at) {
-    await reloadPhotos()
-  }
-}
-
-// ------------------------------------------------------------- escaneo
-
-async function startScan() {
+async function startExport() {
+  if (!filtered.value.length || runningKind('export')) return
+  if (!window.confirm(`¿Exportar ${filtered.value.length} fotos con el preset «${exportPreset.value}»?`))
+    return
   error.value = null
   try {
-    await api.scan()
-    await pollScan(true)
+    await api.export(filtered.value.map((p) => p.id), exportPreset.value)
+    await refreshJobs()
   } catch (e) {
     error.value = String(e)
   }
 }
 
-async function pollScan(refreshWhenDone: boolean) {
-  scan.value = await api.scanStatus()
-  if (scan.value.running) {
-    window.setTimeout(() => pollScan(true), 1500)
-  } else if (refreshWhenDone) {
-    await loadFolders()
-    await reloadPhotos()
-  }
-}
-
-// ------------------------------------------------------------- borrado
+// ------------------------------------------------------------- receta en lote
 
 async function closeDevelop() {
   developOpen.value = false
@@ -211,35 +226,7 @@ async function pasteRecipe() {
   await reloadPhotos()
 }
 
-async function startExport() {
-  if (!filtered.value.length || exportState.value?.running) return
-  if (!window.confirm(`¿Exportar ${filtered.value.length} fotos con el preset «${exportPreset.value}»?`))
-    return
-  error.value = null
-  try {
-    await api.export(filtered.value.map((p) => p.id), exportPreset.value)
-    await pollExport()
-  } catch (e) {
-    error.value = String(e)
-  }
-}
-
-async function pollExport() {
-  exportState.value = await api.exportStatus()
-  if (exportState.value.running) {
-    window.setTimeout(pollExport, 1000)
-  } else if (exportState.value.finished_at) {
-    const res = exportState.value.results
-    const bad = res.filter((r) => !r.ok)
-    notice.value = `Exportación «${exportState.value.preset}»: ${res.length - bad.length} ok${
-      bad.length
-        ? ` · ${bad.length} con error — ${bad.slice(0, 3).map((r) => `${r.stem}: ${r.error}`).join(' · ')}${bad.length > 3 ? '…' : ''}`
-        : ''
-    }`
-    await loadFolders()
-    await reloadPhotos()
-  }
-}
+// ------------------------------------------------------------- borrado
 
 function onDeleted(trashed: string[], errors: string[]) {
   deleteOpen.value = false
@@ -249,6 +236,11 @@ function onDeleted(trashed: string[], errors: string[]) {
   if (errors.length) error.value = errors.join(' · ')
   reloadPhotos()
   loadFolders()
+}
+
+function onCloseFolderStarted() {
+  closeOpen.value = false
+  refreshJobs()
 }
 
 // ------------------------------------------------------------- selección y teclado
@@ -290,6 +282,10 @@ function onKey(e: KeyboardEvent) {
 
   if (deleteOpen.value) {
     if (e.key === 'Escape') deleteOpen.value = false
+    return
+  }
+  if (closeOpen.value) {
+    if (e.key === 'Escape') closeOpen.value = false
     return
   }
   if (developOpen.value) return // Develop gestiona su propio teclado
@@ -339,13 +335,15 @@ onMounted(async () => {
   try {
     health.value = await api.health()
     await loadFolders()
-    await pollScan(true)
-    await pollMetrics().catch(() => {})
+    await refreshJobs()
   } catch (e) {
     error.value = String(e)
   }
 })
-onUnmounted(() => window.removeEventListener('keydown', onKey))
+onUnmounted(() => {
+  window.removeEventListener('keydown', onKey)
+  window.clearTimeout(jobsTimer)
+})
 </script>
 
 <template>
@@ -353,13 +351,9 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
     <aside>
       <div class="brand">photo<span>-editor</span></div>
       <div class="scanbox">
-        <button :disabled="scan?.running" @click="startScan">
-          {{ scan?.running ? 'Escaneando…' : 'Escanear archivo' }}
+        <button :disabled="runningKind('scan')" @click="startScan">
+          {{ runningKind('scan') ? 'Escaneando…' : 'Escanear archivo' }}
         </button>
-        <div v-if="scan?.running" class="scanprog">
-          {{ scan.done }}/{{ scan.total }} · {{ scan.folder }}
-        </div>
-        <div v-if="scan?.error" class="err">{{ scan.error }}</div>
       </div>
       <nav>
         <button
@@ -373,6 +367,28 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
           <span class="fcount">{{ f.photo_count }}</span>
         </button>
       </nav>
+      <div v-if="jobs.length" class="jobsbox">
+        <div
+          v-for="j in jobs.slice(0, 5)"
+          :key="j.id"
+          class="jobrow"
+          :class="j.state"
+          :title="j.error ?? j.title"
+        >
+          <span class="jt">{{ j.title }}</span>
+          <span class="js">{{
+            j.state === 'running'
+              ? j.progress.total
+                ? `${j.progress.done}/${j.progress.total}`
+                : '…'
+              : j.state === 'queued'
+                ? 'cola'
+                : j.state === 'done'
+                  ? '✔'
+                  : '✖'
+          }}</span>
+        </div>
+      </div>
     </aside>
 
     <main>
@@ -403,10 +419,10 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
         >
           Marcar sin puntuar con 1★
         </button>
-        <button class="pill" :disabled="metrics?.running || !current" @click="startMetrics">
+        <button class="pill" :disabled="runningKind('metrics') || !current" @click="startMetrics">
           {{
-            metrics?.running
-              ? `Analizando ${metrics.done}/${metrics.total}…`
+            runningKind('metrics')
+              ? `Analizando ${runningJob('metrics')?.progress.done ?? 0}/${runningJob('metrics')?.progress.total || '?'}…`
               : 'Analizar nitidez'
           }}
         </button>
@@ -434,14 +450,17 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
         </select>
         <button
           class="pill"
-          :disabled="!filtered.length || exportState?.running"
+          :disabled="!filtered.length || runningKind('export')"
           @click="startExport"
         >
           {{
-            exportState?.running
-              ? `Exportando ${exportState.done}/${exportState.total}…`
+            runningKind('export')
+              ? `Exportando ${runningJob('export')?.progress.done ?? 0}/${runningJob('export')?.progress.total || '?'}…`
               : `Exportar ${filtered.length}`
           }}
+        </button>
+        <button class="pill" :disabled="!current || runningKind('close')" @click="closeOpen = true">
+          Cerrar carpeta
         </button>
         <button class="pill danger" :disabled="!counts.discard" @click="deleteOpen = true">
           Revisar descartes <b>{{ counts.discard }}</b>
@@ -469,8 +488,8 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
       </div>
 
       <footer class="keys">
-        ← → ↑ ↓ moverse · 1-5 estrellas · 0 quitar · X descartar (1★) · Enter lupa · F zoom ·
-        I info · Esc cerrar
+        ← → ↑ ↓ moverse · 1-5 estrellas · 0 quitar · X descartar (1★) · D revelar · Enter lupa ·
+        F zoom · I info · Esc cerrar
       </footer>
     </main>
 
@@ -500,6 +519,13 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
       :folder-name="current.name"
       @close="deleteOpen = false"
       @done="onDeleted"
+    />
+
+    <CloseFolder
+      v-if="closeOpen && current"
+      :folder="current"
+      @close="closeOpen = false"
+      @started="onCloseFolderStarted"
     />
   </div>
 </template>
@@ -537,14 +563,6 @@ aside {
 }
 .scanbox button:hover:not(:disabled) { border-color: var(--acc); }
 .scanbox button:disabled { opacity: 0.6; cursor: default; }
-.scanprog {
-  margin-top: 6px;
-  font-size: 12px;
-  color: var(--dim);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 nav { overflow-y: auto; flex: 1; padding: 8px; }
 .folder {
   display: flex;
@@ -564,6 +582,31 @@ nav { overflow-y: auto; flex: 1; padding: 8px; }
 .folder.on { background: var(--panel2); box-shadow: inset 2px 0 0 var(--acc); }
 .fname { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fcount { color: var(--dim); font-size: 12px; }
+
+.jobsbox {
+  border-top: 1px solid var(--line);
+  padding: 8px 12px;
+  font-size: 11.5px;
+  max-height: 140px;
+  overflow-y: auto;
+}
+.jobrow {
+  display: flex;
+  gap: 8px;
+  padding: 3px 0;
+  color: var(--dim);
+}
+.jobrow .jt {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.jobrow .js { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.jobrow.running { color: var(--acc); }
+.jobrow.queued { color: var(--dim); }
+.jobrow.done .js { color: var(--ok); }
+.jobrow.error { color: #ff9c8f; }
 
 main { min-width: 0; display: flex; flex-direction: column; min-height: 0; }
 header {
@@ -670,7 +713,7 @@ h1 { font-size: 16px; margin: 0; }
   .brand { display: none; }
   .scanbox { padding: 0; border: 0; flex: none; }
   .scanbox button { width: auto; white-space: nowrap; }
-  .scanprog { display: none; }
+  .jobsbox { display: none; }
   nav { display: flex; flex-direction: row; overflow-x: auto; overflow-y: hidden; padding: 0; }
   .folder { width: auto; white-space: nowrap; flex: none; }
   .fname { max-width: 150px; }

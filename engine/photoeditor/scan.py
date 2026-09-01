@@ -4,7 +4,6 @@ Solo el primer nivel de cada carpeta de fecha; se saltan carpetas ocultas,
 las que empiezan por "_" (trabajo temporal) y 999998* (herramientas).
 """
 import re
-import threading
 import time
 from pathlib import Path
 
@@ -14,16 +13,6 @@ from . import config, db, xmp
 
 IMAGE_EXTS = {".arw", ".jpg", ".jpeg", ".tif", ".tiff", ".png"}
 _EXIF_DT = re.compile(r"^(\d{4}):(\d{2}):(\d{2}) ")
-
-_lock = threading.Lock()
-state: dict = {
-    "running": False,
-    "folder": None,
-    "done": 0,
-    "total": 0,
-    "error": None,
-    "finished_at": None,
-}
 
 
 def _taken_at(path: Path) -> str | None:
@@ -93,36 +82,30 @@ def _scan_folder(con, folder: Path) -> None:
     con.commit()
 
 
-def _scan_thread(only: list[str] | None) -> None:
-    con = db.connect()
-    try:
-        root = config.get_root()
-        dirs = folder_dirs(root)
-        if only:
-            wanted = set(only)
-            dirs = [d for d in dirs if d.name in wanted]
-        state["total"] = len(dirs)
-        if not only:
-            names = {d.name for d in dirs}
-            for r in con.execute("SELECT id, name FROM folders").fetchall():
-                if r["name"] not in names:
-                    con.execute("DELETE FROM folders WHERE id=?", (r["id"],))
-            con.commit()
-        for d in dirs:
-            state["folder"] = d.name
-            _scan_folder(con, d)
-            state["done"] += 1
-    except Exception as exc:
-        state["error"] = str(exc)
-    finally:
-        state.update(running=False, folder=None, finished_at=time.time())
-        con.close()
+def job_fn(only: list[str] | None):
+    """Función de trabajo para la cola (jobs.submit)."""
 
+    def run(job: dict) -> dict:
+        con = db.connect()
+        try:
+            root = config.get_root()
+            dirs = folder_dirs(root)
+            if only:
+                wanted = set(only)
+                dirs = [d for d in dirs if d.name in wanted]
+            job["progress"]["total"] = len(dirs)
+            if not only:
+                names = {d.name for d in dirs}
+                for r in con.execute("SELECT id, name FROM folders").fetchall():
+                    if r["name"] not in names:
+                        con.execute("DELETE FROM folders WHERE id=?", (r["id"],))
+                con.commit()
+            for d in dirs:
+                job["progress"]["current"] = d.name
+                _scan_folder(con, d)
+                job["progress"]["done"] += 1
+            return {"carpetas": len(dirs)}
+        finally:
+            con.close()
 
-def run_scan(only: list[str] | None = None) -> bool:
-    with _lock:
-        if state["running"]:
-            return False
-        state.update(running=True, folder=None, done=0, total=0, error=None, finished_at=None)
-    threading.Thread(target=_scan_thread, args=(only,), daemon=True).start()
-    return True
+    return run
