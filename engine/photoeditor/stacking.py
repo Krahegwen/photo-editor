@@ -98,7 +98,7 @@ def _detect_stars(
     repetibilidad entre frames consecutivos en las Perseidas urbanas."""
     s = 1.0 if half else 2.0
     d = cv2.GaussianBlur(gray, (0, 0), s) - cv2.GaussianBlur(gray, (0, 0), 3 * s)
-    if excl is not None:
+    if excl is not None and excl.shape == d.shape:
         d[excl > 0] = 0
     mad = float(np.median(np.abs(d))) + 1e-3
     peaks = (d == cv2.dilate(d, np.ones((5, 5), np.uint8))) & (d > 8.0 * mad)
@@ -109,15 +109,39 @@ def _detect_stars(
     return np.stack([xs[order], ys[order]]).T.astype(np.float32)
 
 
+def _quick_votes(a: np.ndarray, b: np.ndarray, max_shift: float = 500.0) -> int:
+    """Votación rápida de traslación dominante entre dos nubes de puntos.
+    Sirve de puerta barata antes de astroalign: cuando NO hay solape coherente,
+    astroalign quema 30-60 s agotando triángulos antes de rendirse."""
+    if len(a) < 10 or len(b) < 10:
+        return 0
+    diffs = (b[:, None, :] - a[None, :, :]).reshape(-1, 2)
+    m = (np.abs(diffs) < max_shift).all(axis=1)
+    d = diffs[m]
+    if len(d) < 10:
+        return 0
+    bins = int(2 * max_shift // 6)
+    H, _, _ = np.histogram2d(
+        d[:, 0], d[:, 1], bins=bins, range=[[-max_shift, max_shift], [-max_shift, max_shift]]
+    )
+    return int(H.max())
+
+
 def _pair_transform(
     prev_pts: np.ndarray, pts: np.ndarray
 ) -> tuple[np.ndarray, int, str]:
-    """Similitud frame→frame anterior (movimiento pequeño). astroalign primero;
-    fallback vecino-más-próximo + RANSAC. Escala fuera de [0.98, 1.02] = frame
-    descartado: mejor perder uno que meter una transformación espuria."""
-    if len(prev_pts) >= 10 and len(pts) >= 10 and _aa is not None:
+    """Similitud frame→frame anterior (movimiento pequeño). astroalign primero
+    (con puerta rápida); fallback vecino-más-próximo + RANSAC. Escala fuera de
+    [0.98, 1.02] = frame descartado: mejor perder uno que meter una
+    transformación espuria."""
+    if (
+        len(prev_pts) >= 10
+        and len(pts) >= 10
+        and _aa is not None
+        and _quick_votes(prev_pts, pts) >= 12
+    ):
         try:
-            t, (s, _d) = _aa.find_transform(pts, prev_pts, max_control_points=120)
+            t, (s, _d) = _aa.find_transform(pts, prev_pts, max_control_points=80)
             if 0.98 <= float(t.scale) <= 1.02:
                 return t.params[:2].astype(np.float32), len(s), "astroalign"
         except Exception:
@@ -178,19 +202,49 @@ def _refine_to_ref(
 # ------------------------------------------------------------------ apoyo
 
 
-def _exposure_seconds(path: Path) -> float:
+def _exposure_params(path: Path) -> tuple[float, float, float]:
+    """(segundos, ISO, f) desde EXIF; 0.0 donde falte."""
     import exifread
 
     try:
         with open(path, "rb") as fh:
-            tags = exifread.process_file(fh, details=False, stop_tag="EXIF ExposureTime")
-        val = str(tags.get("EXIF ExposureTime", "")).strip()
-        if "/" in val:
-            a, b = val.split("/")
-            return float(a) / float(b)
-        return float(val) if val else 0.0
+            tags = exifread.process_file(fh, details=False)
     except Exception:
+        return 0.0, 0.0, 0.0
+
+    def ratio(name: str) -> float:
+        v = str(tags.get(name, "")).strip()
+        try:
+            if "/" in v:
+                a, b = v.split("/")
+                return float(a) / float(b)
+            return float(v) if v else 0.0
+        except (ValueError, ZeroDivisionError):
+            return 0.0
+
+    return ratio("EXIF ExposureTime"), ratio("EXIF ISOSpeedRatings"), ratio("EXIF FNumber")
+
+
+def _exposure_seconds(path: Path) -> float:
+    return _exposure_params(path)[0]
+
+
+def _ev_linear(path: Path) -> float:
+    """Exposición fotométrica relativa t·ISO/f² (0 si el EXIF no da para más)."""
+    t, iso, f = _exposure_params(path)
+    if t <= 0 or f <= 0:
         return 0.0
+    return t * (iso or 100.0) / (f * f)
+
+
+def _apply_gain(img16: np.ndarray, gain: float) -> np.ndarray:
+    """Iguala la exposición en LINEAL (deshace la gamma 2.222, aplica ganancia,
+    vuelve). Con ganancia ~1 no toca nada."""
+    if abs(gain - 1.0) < 0.05:
+        return img16
+    lin = (img16.astype(np.float32) / 65535.0) ** 2.222
+    out = np.clip(lin * gain, 0, None) ** (1 / 2.222)
+    return (np.clip(out, 0, 1) * 65535 + 0.5).astype(np.uint16)
 
 
 def _sigma_clip_stack(files: list[Path], H: int, W: int) -> np.ndarray:
@@ -263,6 +317,22 @@ def job_fn(photo_ids: list[int], mode: str, crop_px: int = 1200,
         def _src(r) -> Path:
             return root / folder / (r["stem"] + r["ext"])
 
+        # normalización de exposición (no en max: el máximo mezcla a propósito;
+        # no en hdr: Mertens necesita las diferencias)
+        gains: dict[str, float] = {}
+        exp_info: dict | None = None
+        if mode in ("luna", "estrellas", "media"):
+            evs = {r["stem"]: _ev_linear(_src(r)) for r in rows if _src(r).exists()}
+            valid = [v for v in evs.values() if v > 0]
+            if valid:
+                ref_ev = float(np.median(valid))
+                gains = {s: (ref_ev / v if v > 0 else 1.0) for s, v in evs.items()}
+                gmax = max((max(g, 1 / g) for g in gains.values() if g > 0), default=1.0)
+                exp_info = {
+                    "normalizadas": sum(1 for g in gains.values() if abs(g - 1) >= 0.05),
+                    "ratio_max": round(gmax, 2),
+                }
+
         try:
             npys: list[Path] = []
 
@@ -277,61 +347,150 @@ def job_fn(photo_ids: list[int], mode: str, crop_px: int = 1200,
                 ]
                 excl = None
                 if len(spread) >= 3:
-                    excl = _exclusion_mask(
-                        np.median(np.stack(spread), axis=0).astype(np.float32), half
-                    )
+                    # solo la forma mayoritaria: mezclar vertical y horizontal
+                    # (reencuadres con giro de cámara) rompería la mediana
+                    from collections import Counter
 
-                mid = len(rows) // 2
-                ref_img = develop.decode(_src(rows[mid]), half=half)
-                ref_shape = ref_img.shape[:2]
-                ref_pts = _detect_stars(_gray16f(ref_img), excl, half)
-                if len(ref_pts) < 20:
-                    raise ValueError(
-                        f"El frame de referencia ({rows[mid]['stem']}) tiene pocas "
-                        f"estrellas ({len(ref_pts)})"
-                    )
-                p = work / f"{rows[mid]['stem']}.npy"
-                np.save(p, ref_img.astype(np.uint16))
-                npys.append(p)
-                job["progress"]["done"] += 1
-                matches: list[int] = []
-                refinadas = 0
-                metodo = {"astroalign": 0, "ransac": 0}
+                    dom = Counter(g.shape for g in spread).most_common(1)[0][0]
+                    same = [g for g in spread if g.shape == dom]
+                    if len(same) >= 3:
+                        excl = _exclusion_mask(
+                            np.median(np.stack(same), axis=0).astype(np.float32), half
+                        )
 
-                for chain in (rows[mid + 1 :], rows[mid - 1 :: -1] if mid > 0 else []):
-                    prev_pts = ref_pts
-                    t_prev = np.eye(3, dtype=np.float32)
-                    for r in chain:
-                        job["progress"]["current"] = r["stem"]
+                def _decode_norm(r):
+                    img = develop.decode(_src(r), half=half)
+                    return _apply_gain(img, gains.get(r["stem"], 1.0))
+
+                def _pass(seg_rows):
+                    """Cadena anclada al medio del segmento + refinamiento absoluto.
+                    Devuelve (npys, ref_pts, ref_shape, pendientes, metodo, matches)."""
+                    seg_npys: list[Path] = []
+                    pend: list[tuple] = []
+                    matches: list[int] = []
+                    metodo = {"astroalign": 0, "ransac": 0}
+                    m0 = len(seg_rows) // 2
+                    ref_row = seg_rows[m0]
+                    if not _src(ref_row).exists():
+                        raise ValueError(f"la referencia {ref_row['stem']} no está en disco")
+                    ref_img = _decode_norm(ref_row)
+                    rshape = ref_img.shape[:2]
+                    rpts = _detect_stars(_gray16f(ref_img), excl, half)
+                    if len(rpts) < 20:
+                        raise ValueError(
+                            f"la referencia {ref_row['stem']} tiene pocas estrellas ({len(rpts)})"
+                        )
+                    p = work / f"{ref_row['stem']}.npy"
+                    np.save(p, ref_img.astype(np.uint16))
+                    seg_npys.append(p)
+                    job["progress"]["done"] += 1
+                    for chain in (seg_rows[m0 + 1 :], seg_rows[m0 - 1 :: -1] if m0 > 0 else []):
+                        prev_pts, t_prev = rpts, np.eye(3, dtype=np.float32)
+                        for r in chain:
+                            job["progress"]["current"] = r["stem"]
+                            try:
+                                if not _src(r).exists():
+                                    raise ValueError("no está en disco")
+                                img = _decode_norm(r)
+                                pts = _detect_stars(_gray16f(img), excl, half)
+                                M, n, kind = _pair_transform(prev_pts, pts)
+                                t_total = _compose(t_prev, M)
+                                t_total, n_ref = _refine_to_ref(rpts, pts, t_total)
+                                warped = cv2.warpAffine(
+                                    img, t_total[:2], (rshape[1], rshape[0]),
+                                    flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT,
+                                )
+                                p = work / f"{r['stem']}.npy"
+                                np.save(p, warped.astype(np.uint16))
+                                seg_npys.append(p)
+                                prev_pts, t_prev = pts, t_total
+                                matches.append(max(n, n_ref))
+                                metodo[kind] += 1
+                            except Exception as exc:
+                                pend.append((r, str(exc)))
+                            job["progress"]["done"] += 1
+                    return seg_npys, rpts, rshape, pend, metodo, matches
+
+                # pasada 1: cadena principal
+                npys, ref_pts_a, ref_shape_a, pend, metodo, matches = _pass(rows)
+
+                # pasada 2: los caídos reintentan DIRECTOS contra la referencia
+                # (astroalign aguanta reencuadres grandes mientras haya solape)
+                recuperadas = 0
+                still: list = []
+                if pend:
+                    job["progress"]["total"] += len(pend)
+                    for r, _why in pend:
+                        job["progress"]["current"] = f"{r['stem']} (directo)"
                         try:
-                            src_path = _src(r)
-                            if not src_path.exists():
-                                raise ValueError("no está en disco")
-                            img = develop.decode(src_path, half=half)
+                            img = _decode_norm(r)
                             pts = _detect_stars(_gray16f(img), excl, half)
-                            M, n, kind = _pair_transform(prev_pts, pts)
-                            t_total = _compose(t_prev, M)
-                            t_total, n_ref = _refine_to_ref(ref_pts, pts, t_total)
-                            if n_ref:
-                                refinadas += 1
+                            M, _n, _kind = _pair_transform(ref_pts_a, pts)
+                            t_total = np.vstack([M, [0, 0, 1]]).astype(np.float32)
+                            t_total, _n_ref = _refine_to_ref(ref_pts_a, pts, t_total)
                             warped = cv2.warpAffine(
-                                img, t_total[:2], (ref_shape[1], ref_shape[0]),
+                                img, t_total[:2], (ref_shape_a[1], ref_shape_a[0]),
                                 flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT,
                             )
                             p = work / f"{r['stem']}.npy"
                             np.save(p, warped.astype(np.uint16))
                             npys.append(p)
-                            prev_pts, t_prev = pts, t_total
-                            matches.append(max(n, n_ref))
-                            metodo[kind] += 1
-                        except Exception as exc:
-                            fallidos.append(f"{r['stem']}: {exc}")
+                            recuperadas += 1
+                        except Exception:
+                            still.append(r)
                         job["progress"]["done"] += 1
+
+                # pasada 3: si quedan ≥3, probablemente es OTRO ENCUADRE:
+                # se apila aparte con su propio rango
+                seg_b = None
+                if len(still) >= 3:
+                    still.sort(key=lambda r: r["stem"])
+                    job["progress"]["total"] += len(still)
+                    try:
+                        npys_b, _rp, _rs, pend_b, _mb, _matb = _pass(still)
+                        for r, why in pend_b:
+                            fallidos.append(f"{r['stem']}: {why}")
+                        if len(npys_b) >= 3:
+                            sample_b = np.load(npys_b[0], mmap_mode="r")
+                            res_b = _sigma_clip_stack(
+                                npys_b, sample_b.shape[0], sample_b.shape[1]
+                            )
+                            out_b = np.clip(res_b, 0, 65535).astype(np.uint16)
+                            fb, lb = still[0]["stem"][-4:], still[-1]["stem"][-4:]
+                            base_b = f"apilado_{mode}_{fb}-{lb}"
+                            tif_b, jpg_b = outdir / f"{base_b}.tif", outdir / f"{base_b}.jpg"
+                            if force or not (tif_b.exists() or jpg_b.exists()):
+                                _save_tif16(out_b, tif_b)
+                                _save_jpg(out_b, jpg_b, q=95, subsampling=0, dpi=None)
+                                seg_b = {
+                                    "rango": f"{fb}-{lb}",
+                                    "frames": len(npys_b),
+                                    "salida": [f"{folder}/{base_b}.tif", f"{folder}/{base_b}.jpg"],
+                                }
+                            else:
+                                seg_b = {"rango": f"{fb}-{lb}", "frames": len(npys_b),
+                                         "error": f"ya existe {base_b} (usa force)"}
+                        else:
+                            for pth in npys_b:
+                                fallidos.append(f"{pth.stem}: encuadre distinto con <3 frames")
+                    except ValueError as exc:
+                        for r in still:
+                            fallidos.append(f"{r['stem']}: posible otro encuadre ({exc})")
+                elif still:
+                    for r in still:
+                        fallidos.append(
+                            f"{r['stem']}: no alinea ni con cadena ni directo "
+                            "(¿otro encuadre? mínimo 3 frames para apilarlo aparte)"
+                        )
+
                 info["alineado"] = metodo | {
                     "matches_mediana": int(np.median(matches)) if matches else 0,
-                    "refinadas_contra_ref": refinadas,
-                    "referencia": rows[mid]["stem"],
+                    "recuperadas_directas": recuperadas,
+                    "referencia": rows[len(rows) // 2]["stem"],
                 }
+                if seg_b is not None:
+                    info["encuadres"] = 2
+                    info["segmento_b"] = seg_b
 
             else:
                 acc_max = None
@@ -345,6 +504,8 @@ def job_fn(photo_ids: list[int], mode: str, crop_px: int = 1200,
                         if not src_path.exists():
                             raise ValueError("no está en disco")
                         img = develop.decode(src_path, half=half)
+                        if mode in ("luna", "media"):
+                            img = _apply_gain(img, gains.get(r["stem"], 1.0))
 
                         if mode == "luna":
                             cx, cy = _moon_centroid(img)
@@ -441,6 +602,8 @@ def job_fn(photo_ids: list[int], mode: str, crop_px: int = 1200,
                 con.close()
 
             info["salida"] = [f"{folder}/{base}.tif", f"{folder}/{base}.jpg"]
+            if exp_info is not None:
+                info["exposiciones"] = exp_info
             info["fallidos"] = fallidos
             return info
         finally:
