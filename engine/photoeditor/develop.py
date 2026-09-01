@@ -18,6 +18,11 @@ import cv2
 import numpy as np
 import rawpy
 
+try:  # al cargar, no en la primera curva: importar scipy cuesta ~1.4 s
+    from scipy.interpolate import PchipInterpolator as _Pchip
+except Exception:  # sin scipy, interpolación lineal
+    _Pchip = None
+
 DEFAULTS: dict = {
     "temp": 0,          # -100..100  azul ↔ ámbar (sobre el WB de cámara)
     "tint": 0,          # -100..100  verde ↔ magenta
@@ -208,11 +213,9 @@ def apply_recipe(img: np.ndarray, recipe: dict, skip_crop: bool = False) -> np.n
                 fx.append(1.0)
                 fy.append(fy[-1])
             grid = np.linspace(0, 1, 4096, dtype=np.float32)
-            try:
-                from scipy.interpolate import PchipInterpolator
-
-                lut = PchipInterpolator(fx, fy)(grid).astype(np.float32)
-            except Exception:
+            if _Pchip is not None:
+                lut = _Pchip(fx, fy)(grid).astype(np.float32)
+            else:
                 lut = np.interp(grid, np.float32(fx), np.float32(fy)).astype(np.float32)
             lut = np.clip(lut, 0, 1)
             out = lut[np.clip(out * 4095.0, 0, 4095).astype(np.int32)]
