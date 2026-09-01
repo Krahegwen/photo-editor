@@ -5,10 +5,18 @@ puntuar → revelar ARW → apilar astro → exportar). Plan por fases: F0 cimie
 F1 cribado ✔, F2 revelado ✔, F3 MCP+jobs ✔, F4 astro ✔, F5 extras (según uso).
 
 Notas F4: `stacking.py` — modos luna (port de proc.py: centroide+phaseCorrelate),
-estrellas (detección propia + estimateAffinePartial2D RANSAC; NO astroalign),
-media, max, hdr (Mertens). Temporales .npy uint16 en %LOCALAPPDATA%/stackwork,
-borrados al acabar. Salida apilado_<modo>_<rango>.tif (16b LZW) + .jpg en la
-carpeta; el acabado (viejo finish.py) se hace abriendo el TIFF en Revelar.
+estrellas (detector DoG propio + astroalign con puerta rápida de votación y
+fallback NN+RANSAC; cadena incremental anclada al frame central + refinamiento
+absoluto contra la referencia), media, max, hdr (Mertens). Exposición
+normalizada en lineal (t·ISO/f², mediana como referencia) en luna/estrellas/
+media; reencuadres: pasada directa de recuperación y segmentación automática
+(≥3 frames → apilado aparte con su rango). Temporales .npy uint16 en
+%LOCALAPPDATA%/stackwork, borrados al acabar. Salida apilado_<modo>_<rango>.tif
+(16b LZW) + .jpg; el acabado (viejo finish.py) se hace en Revelar.
+
+Formatos: `formats.py` centraliza RAW_EXTS (arw, dng, rw2, cr2/cr3, nef, raf,
+orf, pef, srw…) — probado con los samples DNG/RW2 de `260901- SAMPLE`. Ojo:
+CR3 puede venir sin EXIF vía exifread (contenedor ISO-BMFF).
 
 Notas F3: cola secuencial en `jobs.py` (registro en memoria, /api/jobs);
 escaneo/métricas/export/cerrar-carpeta son jobs. `mcp_server.py` = cliente
