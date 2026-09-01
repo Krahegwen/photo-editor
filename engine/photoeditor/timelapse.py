@@ -2,15 +2,15 @@
 
 Usa el ffmpeg embebido de imageio-ffmpeg (sin tocar el PATH del sistema).
 Los frames se copian numerados a %LOCALAPPDATA%/stackwork y se borran al
-terminar. Salida timelapse_<rango>_<fps>fps.mp4 en la carpeta (H.264 CRF 18,
-1920x1080 con pillarbox para verticales).
+terminar. Salida '<carpeta> - timelapse <HHMM>-<HHMM> <fps>fps.mp4' en la
+carpeta (H.264 CRF 18, 1920x1080 con pillarbox para verticales).
 """
 import shutil
 import subprocess
 import uuid
 from pathlib import Path
 
-from . import config, db, previews
+from . import config, db, naming, previews
 
 
 def _ffmpeg_exe() -> str:
@@ -37,7 +37,7 @@ def job_fn(photo_ids: list[int], fps: int = 24, force: bool = False):
         try:
             rows = [
                 con.execute(
-                    """SELECT p.id, p.stem, p.ext, p.mtime, f.name AS folder
+                    """SELECT p.id, p.stem, p.ext, p.mtime, p.taken_at, f.name AS folder
                        FROM photos p JOIN folders f ON f.id = p.folder_id WHERE p.id=?""",
                     (pid,),
                 ).fetchone()
@@ -53,7 +53,7 @@ def job_fn(photo_ids: list[int], fps: int = 24, force: bool = False):
         rows.sort(key=lambda r: r["stem"])
         root = config.get_root()
 
-        out = root / folder / f"timelapse_{rows[0]['stem'][-4:]}-{rows[-1]['stem'][-4:]}_{fps}fps.mp4"
+        out = root / folder / (naming.output_base(folder, "timelapse", rows, f" {fps}fps") + ".mp4")
         if out.exists() and not force:
             raise ValueError(f"Ya existe {out.name} — usa force para sobreescribir")
 

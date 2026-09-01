@@ -4,7 +4,14 @@ import type { Photo } from '../types'
 defineProps<{ photo: Photo; selected: boolean }>()
 const emit = defineEmits<{ select: []; open: [] }>()
 
-const last4 = (s: string) => s.slice(-4)
+// Fotos de cámara: los 4 dígitos finales. Salidas con nombre largo
+// ('<carpeta> - trails 0202-0217', samples con espacios…): lo que sigue al
+// último ' - ', que es la parte que distingue.
+const last4 = (s: string) => {
+  if (/^[A-Za-z_]*\d{4,5}$/.test(s)) return s.slice(-4)
+  const i = s.lastIndexOf(' - ')
+  return i >= 0 ? s.slice(i + 3) : s.slice(-4)
+}
 </script>
 
 <template>
@@ -85,4 +92,5 @@ const last4 = (s: string) => s.slice(-4)
 .right { margin-left: auto; }
 .stars { color: var(--acc); letter-spacing: 1px; }
 .discardmark { color: var(--no); font-weight: 700; }
+.meta b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>

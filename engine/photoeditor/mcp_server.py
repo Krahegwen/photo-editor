@@ -300,10 +300,11 @@ def apilar(carpeta: str, modo: str, desde: str | None = None, hasta: str | None 
            crop_px: int = 1200, force: bool = False) -> dict:
     """Apila fotos de una carpeta como trabajo encolado. Modos: 'luna' (recorta el
     disco y alinea subpíxel), 'estrellas' (alineado de campo estelar con rotación),
-    'media' (sigma-clip sin alinear), 'max' (máximo por píxel: trails y composites
-    de fuegos), 'hdr' (fusión de brackets por exposición). Selección por lista de
-    fotos o por rango desde/hasta (4 dígitos, p. ej. 8636 a 8727). El resultado
-    queda como apilado_<modo>_<rango>.tif/jpg en la carpeta, editable en Revelar."""
+    'media' (sigma-clip sin alinear), 'max' (máximo por píxel: composites de
+    fuegos), 'trails' (star trails: máximo con relleno de huecos entre disparos),
+    'hdr' (fusión de brackets por exposición). Selección por lista de fotos o por
+    rango desde/hasta (4 dígitos, p. ej. 8636 a 8727). El resultado queda como
+    '<carpeta> - <tipo> <HHMM>-<HHMM>.tif/jpg' en la carpeta, editable en Revelar."""
     f = _folder(carpeta)
     todos = _photos(f["id"])
     ps = [p for p in todos if is_raw(p["ext"])] or todos
@@ -381,6 +382,14 @@ def galeria(carpeta: str, min_rating: int = 4, titulo: str | None = None,
         payload["folder_id"] = f["id"]
         payload["min_rating"] = min_rating
     return _post("/api/gallery", payload)
+
+
+@mcp.tool()
+def renombrar_carpeta(carpeta: str, nuevo_nombre: str) -> dict:
+    """Renombra una carpeta del archivo en disco y en el catálogo (conserva
+    previews, recetas y sidecars). Convención de Diego: 'AAMMDD - Descripción'."""
+    f = _folder(carpeta)
+    return _post(f"/api/folders/{f['id']}/rename", {"name": nuevo_nombre})
 
 
 @mcp.tool()

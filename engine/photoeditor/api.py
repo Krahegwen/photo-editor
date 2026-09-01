@@ -160,6 +160,59 @@ def list_folders():
         con.close()
 
 
+class RenameFolderRequest(BaseModel):
+    name: str
+
+
+_BAD_NAME_CHARS = set('\\/:*?"<>|')
+
+
+@app.post("/api/folders/{folder_id}/rename")
+def rename_folder(folder_id: int, req: RenameFolderRequest):
+    """Renombra la carpeta en disco y en el índice; migra la caché de previews
+    (su clave es la ruta relativa) para no regenerarla."""
+    new = req.name.strip().rstrip(".")
+    if not new or (_BAD_NAME_CHARS & set(new)):
+        raise HTTPException(400, 'Nombre no válido (sin \\ / : * ? " < > |)')
+    if new.startswith((".", "_", "999998")):
+        raise HTTPException(400, "Los nombres que empiezan por . _ o 999998 se ignoran al escanear")
+    if jobs.active():
+        raise HTTPException(409, "Espera a que termine la cola de trabajos antes de renombrar")
+    root = config.get_root()
+    con = db.connect()
+    try:
+        row = con.execute("SELECT id, name FROM folders WHERE id=?", (folder_id,)).fetchone()
+        if row is None:
+            raise HTTPException(404, "Carpeta no encontrada")
+        old = row["name"]
+        if new == old:
+            return {"ok": True, "name": old, "previews_migradas": 0}
+        src, dst = root / old, root / new
+        if not src.is_dir():
+            raise HTTPException(404, f"La carpeta {old} no está en disco")
+        if dst.exists() and dst.resolve() != src.resolve():
+            raise HTTPException(409, f"Ya existe {new}")
+        photos = con.execute(
+            "SELECT stem, ext, mtime FROM photos WHERE folder_id=?", (folder_id,)
+        ).fetchall()
+        try:
+            src.rename(dst)
+        except OSError as exc:
+            raise HTTPException(500, f"No se pudo renombrar en disco: {exc}") from exc
+        con.execute("UPDATE folders SET name=? WHERE id=?", (new, folder_id))
+        con.commit()
+    finally:
+        con.close()
+    moved = 0
+    for p in photos:
+        for size in previews.SIZES:
+            a = previews._cache_path(f"{old}/{p['stem']}{p['ext']}", p["mtime"], size)
+            if a.exists():
+                a.replace(previews._cache_path(f"{new}/{p['stem']}{p['ext']}", p["mtime"], size))
+                moved += 1
+    return {"ok": True, "name": new, "previews_migradas": moved}
+
+
 def _parse_dt(text: str | None) -> dt.datetime | None:
     if not text:
         return None

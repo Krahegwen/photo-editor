@@ -8,12 +8,18 @@ const emit = defineEmits<{ close: []; started: [] }>()
 
 const MODES = [
   { key: 'estrellas', label: 'Estrellas', hint: 'alinea el campo estelar (rotación incluida) y apila con sigma-clip' },
+  { key: 'trails', label: 'Star trails', hint: 'máximo por píxel con relleno de los huecos entre disparos' },
   { key: 'luna', label: 'Luna / Sol', hint: 'detecta el disco, recorta y alinea subpíxel; sigma-clip' },
-  { key: 'max', label: 'Máximo', hint: 'sin alinear, máximo por píxel — trails y composites de fuegos' },
+  { key: 'max', label: 'Máximo', hint: 'sin alinear, máximo por píxel crudo — composites de fuegos' },
   { key: 'media', label: 'Media', hint: 'sin alinear, media sigma-clip — reducción de ruido en escena fija' },
   { key: 'hdr', label: 'HDR', hint: 'brackets ordenados por exposición, fusión Mertens (máx. 12)' },
   { key: 'timelapse', label: 'Timelapse', hint: 'vídeo MP4 1080p desde la secuencia (mínimo 10 fotos)' },
 ] as const
+
+const LABELS: Record<string, string> = {
+  luna: 'apilado luna', estrellas: 'apilado estrellas', media: 'apilado media',
+  max: 'apilado max', trails: 'trails', hdr: 'hdr',
+}
 
 const arws = computed(() => {
   const a = props.photos.filter((p) => p.ext === '.arw')
@@ -39,6 +45,17 @@ const selected = computed(() => {
     const n = p.stem.slice(-4)
     return /^\d{4}$/.test(n) && d <= n && n <= h
   })
+})
+
+// intervalo horario de la selección, como lo nombra el motor (naming.py)
+const spanLabel = computed(() => {
+  const ts = selected.value
+    .map((p) => p.taken_at)
+    .filter((t): t is string => !!t)
+    .sort()
+  if (!ts.length) return `${desde.value || '····'}-${hasta.value || '····'}`
+  const hhmm = (t: string) => t.slice(11, 16).replace(':', '')
+  return `${hhmm(ts[0])}-${hhmm(ts[ts.length - 1])}`
 })
 
 async function launch() {
@@ -117,12 +134,12 @@ async function launch() {
       </div>
 
       <p v-if="mode !== 'timelapse'" class="dim note">
-        El resultado queda como <code>apilado_{{ mode }}_{{ desde || '····' }}-{{ hasta || '····' }}.tif/jpg</code>
+        El resultado queda como <code>{{ folderName }} - {{ LABELS[mode] }} {{ spanLabel }}.tif/jpg</code>
         en la carpeta (TIFF de 16 bits para seguir editándolo en Revelar). Los temporales van
         fuera de tus carpetas y se borran solos.
       </p>
       <p v-else class="dim note">
-        El resultado queda como <code>timelapse_{{ desde || '····' }}-{{ hasta || '····' }}_{{ fps }}fps.mp4</code>
+        El resultado queda como <code>{{ folderName }} - timelapse {{ spanLabel }} {{ fps }}fps.mp4</code>
         (1080p H.264) en la carpeta.
       </p>
 

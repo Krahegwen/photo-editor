@@ -8,9 +8,16 @@ Modos:
              astroalign por triángulos con fallback NN+RANSAC — componiendo
              similitudes ancladas al frame central. Media sigma-clip.
 - media:     sin alinear, media sigma-clip (reducción de ruido, escena fija).
-- max:       sin alinear, máximo por píxel (trails, composite de fuegos).
+- max:       sin alinear, máximo por píxel (composite de fuegos, trails crudos).
+- trails:    máximo por píxel + RELLENO DE HUECOS: el movimiento del cielo
+             entre frames consecutivos (misma detección/matching que estrellas)
+             se interpola en fracciones y el frame anterior se funde desplazado,
+             de modo que el trazo cubre el intervalo entre disparos. El suelo
+             (patrón fijo) queda excluido para no emborronarlo.
 - hdr:       brackets ordenados por exposición, alineado por traslación y
              fusión de exposiciones (Mertens).
+
+Salida: '<carpeta> - <tipo> <HHMM>-<HHMM>.tif/jpg' (ver naming.py).
 
 Por qué incremental: entre frames consecutivos el cielo se mueve ~2 px y el
 matching es trivial y robusto; entre extremos de una sesión (rotación de campo
@@ -22,8 +29,11 @@ Los frames decodificados van como .npy uint16 a %LOCALAPPDATA%/stackwork
 resultado se guarda como TIFF16 LZW + JPG q95 en la carpeta; el acabado fino
 (enfoque/saturación, el viejo finish.py) se hace abriendo el TIFF en Revelar.
 """
+import math
 import shutil
 import uuid
+from collections import Counter
+from datetime import datetime
 from pathlib import Path
 
 import cv2
@@ -34,10 +44,18 @@ try:
 except Exception:  # opcional: sin él queda el fallback NN+RANSAC
     _aa = None
 
-from . import config, db, develop
+from . import config, db, develop, naming
 from .export import _save_jpg, _save_tif16
 
-MODES = ("luna", "estrellas", "media", "max", "hdr")
+MODES = ("luna", "estrellas", "media", "max", "trails", "hdr")
+_LABEL = {
+    "luna": "apilado luna",
+    "estrellas": "apilado estrellas",
+    "media": "apilado media",
+    "max": "apilado max",
+    "trails": "trails",
+    "hdr": "hdr",
+}
 _LUMA = np.array([0.2126, 0.7152, 0.0722], np.float32)
 
 
@@ -237,6 +255,21 @@ def _ev_linear(path: Path) -> float:
     return t * (iso or 100.0) / (f * f)
 
 
+def _gap_steps(t_prev: str | None, t_cur: str | None, expo: float) -> int:
+    """Posiciones intermedias para que el trazo del frame anterior cubra el
+    hueco hasta este: ceil(intervalo/exposición), entre 1 y 8. Sin datos, 2."""
+    try:
+        dt = (
+            datetime.strptime(t_cur, "%Y-%m-%d %H:%M:%S")
+            - datetime.strptime(t_prev, "%Y-%m-%d %H:%M:%S")
+        ).total_seconds()
+    except (TypeError, ValueError):
+        return 2
+    if dt <= 0 or expo <= 0:
+        return 2
+    return int(max(1, min(8, math.ceil(dt / expo))))
+
+
 def _apply_gain(img16: np.ndarray, gain: float) -> np.ndarray:
     """Iguala la exposición en LINEAL (deshace la gamma 2.222, aplica ganancia,
     vuelve). Con ganancia ~1 no toca nada."""
@@ -283,7 +316,7 @@ def job_fn(photo_ids: list[int], mode: str, crop_px: int = 1200,
         try:
             rows = [
                 con.execute(
-                    """SELECT p.id, p.stem, p.ext, f.name AS folder
+                    """SELECT p.id, p.stem, p.ext, p.taken_at, f.name AS folder
                        FROM photos p JOIN folders f ON f.id = p.folder_id WHERE p.id=?""",
                     (pid,),
                 ).fetchone()
@@ -300,8 +333,7 @@ def job_fn(photo_ids: list[int], mode: str, crop_px: int = 1200,
         root = config.get_root()
         outdir = root / folder
 
-        first4, last4 = rows[0]["stem"][-4:], rows[-1]["stem"][-4:]
-        base = f"apilado_{mode}_{first4}-{last4}"
+        base = naming.output_base(folder, _LABEL[mode], rows)
         out_tif, out_jpg = outdir / f"{base}.tif", outdir / f"{base}.jpg"
         if not force and (out_tif.exists() or out_jpg.exists()):
             raise ValueError(f"Ya existe {base}.tif/jpg — usa force para sobreescribir")
@@ -320,9 +352,17 @@ def job_fn(photo_ids: list[int], mode: str, crop_px: int = 1200,
         # normalización de exposición (no en max: el máximo mezcla a propósito;
         # no en hdr: Mertens necesita las diferencias)
         gains: dict[str, float] = {}
+        expo_s: dict[str, float] = {}
         exp_info: dict | None = None
-        if mode in ("luna", "estrellas", "media"):
-            evs = {r["stem"]: _ev_linear(_src(r)) for r in rows if _src(r).exists()}
+        if mode in ("luna", "estrellas", "media", "trails"):
+            evs: dict[str, float] = {}
+            for r in rows:
+                p = _src(r)
+                if not p.exists():
+                    continue
+                t, iso, fn = _exposure_params(p)
+                expo_s[r["stem"]] = t
+                evs[r["stem"]] = t * (iso or 100.0) / (fn * fn) if (t > 0 and fn > 0) else 0.0
             valid = [v for v in evs.values() if v > 0]
             if valid:
                 ref_ev = float(np.median(valid))
@@ -333,30 +373,31 @@ def job_fn(photo_ids: list[int], mode: str, crop_px: int = 1200,
                     "ratio_max": round(gmax, 2),
                 }
 
+        def _fixed_mask():
+            """Patrón fijo (vegetación, luces) con 5 frames repartidos: la
+            mediana sin alinear difumina las estrellas y conserva lo quieto.
+            Solo la forma mayoritaria: mezclar vertical y horizontal
+            (reencuadres con giro de cámara) rompería la mediana."""
+            job["progress"]["current"] = "patrón fijo"
+            idxs = sorted({0, len(rows) // 4, len(rows) // 2, 3 * len(rows) // 4, len(rows) - 1})
+            spread = [
+                _gray16f(develop.decode(_src(rows[i]), half=half))
+                for i in idxs
+                if _src(rows[i]).exists()
+            ]
+            if len(spread) < 3:
+                return None
+            dom = Counter(g.shape for g in spread).most_common(1)[0][0]
+            same = [g for g in spread if g.shape == dom]
+            if len(same) < 3:
+                return None
+            return _exclusion_mask(np.median(np.stack(same), axis=0).astype(np.float32), half)
+
         try:
             npys: list[Path] = []
 
             if mode == "estrellas":
-                # patrón fijo con 5 frames repartidos (mediana difumina estrellas)
-                job["progress"]["current"] = "patrón fijo"
-                idxs = sorted({0, len(rows) // 4, len(rows) // 2, 3 * len(rows) // 4, len(rows) - 1})
-                spread = [
-                    _gray16f(develop.decode(_src(rows[i]), half=half))
-                    for i in idxs
-                    if _src(rows[i]).exists()
-                ]
-                excl = None
-                if len(spread) >= 3:
-                    # solo la forma mayoritaria: mezclar vertical y horizontal
-                    # (reencuadres con giro de cámara) rompería la mediana
-                    from collections import Counter
-
-                    dom = Counter(g.shape for g in spread).most_common(1)[0][0]
-                    same = [g for g in spread if g.shape == dom]
-                    if len(same) >= 3:
-                        excl = _exclusion_mask(
-                            np.median(np.stack(same), axis=0).astype(np.float32), half
-                        )
+                excl = _fixed_mask()
 
                 def _decode_norm(r):
                     img = develop.decode(_src(r), half=half)
@@ -457,7 +498,7 @@ def job_fn(photo_ids: list[int], mode: str, crop_px: int = 1200,
                             )
                             out_b = np.clip(res_b, 0, 65535).astype(np.uint16)
                             fb, lb = still[0]["stem"][-4:], still[-1]["stem"][-4:]
-                            base_b = f"apilado_{mode}_{fb}-{lb}"
+                            base_b = naming.output_base(folder, _LABEL[mode], still)
                             tif_b, jpg_b = outdir / f"{base_b}.tif", outdir / f"{base_b}.jpg"
                             if force or not (tif_b.exists() or jpg_b.exists()):
                                 _save_tif16(out_b, tif_b)
@@ -491,6 +532,64 @@ def job_fn(photo_ids: list[int], mode: str, crop_px: int = 1200,
                 if seg_b is not None:
                     info["encuadres"] = 2
                     info["segmento_b"] = seg_b
+
+            elif mode == "trails":
+                excl = _fixed_mask()
+                acc = None
+                prev_img = prev_pts = prev_row = None
+                rellenos = 0
+                sin_relleno: list[str] = []
+                ident = np.float32([[1, 0, 0], [0, 1, 0]])
+                for r in rows:
+                    job["progress"]["current"] = r["stem"]
+                    try:
+                        src_path = _src(r)
+                        if not src_path.exists():
+                            raise ValueError("no está en disco")
+                        img = _apply_gain(
+                            develop.decode(src_path, half=half), gains.get(r["stem"], 1.0)
+                        )
+                        pts = _detect_stars(_gray16f(img), excl, half)
+                        if acc is None:
+                            acc = img.copy()
+                        else:
+                            if img.shape != acc.shape:
+                                raise ValueError("forma distinta (¿reencuadre con giro?)")
+                            acc = np.maximum(acc, img)
+                            # relleno del hueco: el frame anterior avanza hacia
+                            # este en fracciones del movimiento del cielo
+                            try:
+                                M, _n, _k = _pair_transform(prev_pts, pts)  # este → anterior
+                                m_fwd = cv2.invertAffineTransform(M)  # anterior → este
+                                steps = _gap_steps(
+                                    prev_row["taken_at"], r["taken_at"],
+                                    expo_s.get(prev_row["stem"], 0.0),
+                                )
+                                H, W = acc.shape[:2]
+                                for k in range(1, steps + 1):
+                                    f = k / (steps + 1)
+                                    mf = ((1 - f) * ident + f * m_fwd).astype(np.float32)
+                                    w = cv2.warpAffine(
+                                        prev_img, mf, (W, H),
+                                        flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT,
+                                    )
+                                    if excl is not None and excl.shape == w.shape[:2]:
+                                        w[excl > 0] = 0
+                                    acc = np.maximum(acc, w)
+                                rellenos += 1
+                            except Exception as exc:
+                                sin_relleno.append(f"{r['stem']}: {exc}")
+                        prev_img, prev_pts, prev_row = img, pts, r
+                    except Exception as exc:
+                        fallidos.append(f"{r['stem']}: {exc}")
+                    job["progress"]["done"] += 1
+                if acc is None:
+                    raise ValueError("Ningún frame válido")
+                out16 = acc.astype(np.uint16)
+                info["frames"] = len(rows) - len(fallidos)
+                info["huecos"] = {"rellenados": rellenos, "sin_rellenar": len(sin_relleno)}
+                if sin_relleno:
+                    info["huecos"]["detalle"] = sin_relleno[:6]
 
             else:
                 acc_max = None
@@ -560,6 +659,8 @@ def job_fn(photo_ids: list[int], mode: str, crop_px: int = 1200,
                     raise ValueError("Ningún frame válido")
                 out16 = acc_max.astype(np.uint16)
                 info["frames"] = len(rows) - len(fallidos)
+            elif mode == "trails":
+                pass  # out16 ya calculado en su bucle
             else:  # hdr
                 if len(hdr_frames) < 2:
                     raise ValueError("Hacen falta al menos 2 exposiciones válidas para HDR")

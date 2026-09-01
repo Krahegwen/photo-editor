@@ -106,6 +106,33 @@ async function reloadPhotos() {
   }
 }
 
+// ------------------------------------------------------------- renombrar carpeta
+
+const renaming = ref(false)
+const renameText = ref('')
+const renameInput = ref<HTMLInputElement | null>(null)
+
+function startRename() {
+  if (!current.value) return
+  renameText.value = current.value.name
+  renaming.value = true
+  void nextTick(() => renameInput.value?.select())
+}
+
+async function saveRename() {
+  if (!current.value || !renaming.value) return
+  const name = renameText.value.trim()
+  renaming.value = false
+  if (!name || name === current.value.name) return
+  try {
+    const r = await api.renameFolder(current.value.id, name)
+    notice.value = `Carpeta renombrada: ${r.name}`
+    await loadFolders()
+  } catch (e) {
+    error.value = String(e)
+  }
+}
+
 // ------------------------------------------------------------- filtros
 
 const filtered = computed(() => {
@@ -399,7 +426,24 @@ onUnmounted(() => {
 
     <main>
       <header>
-        <h1>{{ current?.name ?? 'Sin carpeta' }}</h1>
+        <input
+          v-if="renaming"
+          ref="renameInput"
+          v-model="renameText"
+          class="rename"
+          spellcheck="false"
+          @keydown.enter.prevent="saveRename"
+          @keydown.esc.prevent="renaming = false"
+          @blur="saveRename"
+        />
+        <template v-else>
+          <h1 :title="current ? 'Doble clic para renombrar' : ''" @dblclick="startRename">
+            {{ current?.name ?? 'Sin carpeta' }}
+          </h1>
+          <button v-if="current" class="ico" title="Renombrar carpeta" @click="startRename">
+            ✎
+          </button>
+        </template>
         <span v-if="current" class="dim">{{ filtered.length }} fotos</span>
         <span class="spacer"></span>
         <span v-if="health" class="dim">
@@ -747,4 +791,24 @@ h1 { font-size: 16px; margin: 0; }
   .grid { padding: 10px 12px; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
   .keys { display: none; }
 }
+.rename {
+  font-size: 17px;
+  font-weight: 600;
+  background: var(--panel2);
+  color: var(--txt);
+  border: 1px solid var(--acc);
+  border-radius: 6px;
+  padding: 4px 8px;
+  min-width: min(420px, 60vw);
+}
+.ico {
+  background: none;
+  border: 1px solid transparent;
+  color: var(--dim);
+  cursor: pointer;
+  border-radius: 6px;
+  padding: 2px 7px;
+  font-size: 14px;
+}
+.ico:hover { color: var(--acc); border-color: var(--line); }
 </style>

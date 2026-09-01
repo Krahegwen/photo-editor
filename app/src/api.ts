@@ -27,6 +27,11 @@ function post<T>(url: string, body: unknown): Promise<T> {
 export const api = {
   health: () => req<Health>('/api/health'),
   folders: () => req<Folder[]>('/api/folders'),
+  renameFolder: (folderId: number, name: string) =>
+    post<{ ok: boolean; name: string; previews_migradas: number }>(
+      `/api/folders/${folderId}/rename`,
+      { name },
+    ),
   photos: (folderId: number) => req<Photo[]>(`/api/photos?folder_id=${folderId}`),
   exif: (photoId: number) => req<Exif>(`/api/exif/${photoId}`),
   rate: (items: { photo_id: number; rating: number }[]) =>

@@ -10,6 +10,16 @@ Notas F5: curva master en la receta (PCHIP, LUT 4096); timelapse con el ffmpeg
 embebido de imageio-ffmpeg; keywords dc:subject conviviendo con xmp:Rating en
 el mismo sidecar; galería en %LOCALAPPDATA%/photo-editor/galleries (NUNCA
 publicar sin orden explícita de Diego — el job devuelve el comando wrangler).
+Modo `trails` = máximo + relleno de huecos entre disparos (el frame anterior
+avanza en fracciones del movimiento del cielo medido con astroalign; el patrón
+fijo queda excluido). `max` sigue siendo el máximo crudo (fuegos).
+
+Nombres de salida (`naming.py`, regla de Diego): '<carpeta> - <tipo>
+<HHMM>-<HHMM>[ extra]' con el intervalo horario real de la selección — p. ej.
+'240812 - Estrellas - trails 0202-0217.tif', '… - timelapse 0202-0217 24fps.mp4'.
+Renombrar carpetas: POST /api/folders/{id}/rename (✎ en la cabecera, doble
+clic en el título, tool MCP renombrar_carpeta) — renombra en disco y en el
+índice y migra la caché de previews; rechaza si hay jobs corriendo.
 
 Notas F4: `stacking.py` — modos luna (port de proc.py: centroide+phaseCorrelate),
 estrellas (detector DoG propio + astroalign con puerta rápida de votación y
