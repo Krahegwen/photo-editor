@@ -17,9 +17,13 @@ $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 $launcher = Join-Path $PSScriptRoot 'photo-editor.ps1'
 $tr = "`"$ps`" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$launcher`" -SoloMotor"
 $sc = if ($AlIniciarSesion) { @('/SC', 'ONLOGON') } else { @('/SC', 'ONCE', '/ST', '00:00') }
-$out = & schtasks /Create /TN $nombre /TR $tr @sc /F 2>&1
-if ($LASTEXITCODE -ne 0) { throw "No se pudo crear la tarea: $out" }
-& schtasks /Run /TN $nombre | Out-Null
+# schtasks avisa por stderr de que /ST ya paso (da igual: la tarea se lanza a
+# mano con /Run); con ErrorActionPreference=Stop eso abortaria el script.
+$ErrorActionPreference = 'Continue'
+& schtasks /Create /TN $nombre /TR $tr @sc /F 2>$null | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "No se pudo crear la tarea $nombre (schtasks devolvio $LASTEXITCODE)" }
+& schtasks /Run /TN $nombre 2>$null | Out-Null
+$ErrorActionPreference = 'Stop'
 $up = $false
 foreach ($i in 1..60) {
   Start-Sleep -Milliseconds 500
