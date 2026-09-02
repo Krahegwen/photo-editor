@@ -298,13 +298,23 @@ def exportar(carpeta: str, preset: str, fotos: list[str] | None = None,
 
 
 @mcp.tool()
-def cerrar_carpeta(carpeta: str, ejecutar: bool = False) -> dict:
+def cerrar_carpeta(carpeta: str, ejecutar: bool = False, favoritas: bool = True) -> dict:
     """Aplica la política de archivo de Diego a una carpeta. Con ejecutar=False
-    devuelve el informe dry-run (qué RAW se borrarían y por qué, qué queda
-    pendiente, qué TIFF no están en FAVS). Enséñale el informe a Diego y solo
-    con su visto bueno repite con ejecutar=True."""
+    devuelve el informe dry-run: qué RAW se borrarían y por qué, qué queda
+    pendiente, qué TIFF no están en FAVS y qué 5★ pasarían a FAVS con el
+    nombre '<carpeta> <HHhMM>' (las que ya están se marcan ya_en_favs).
+    Enséñale el informe a Diego y solo con su visto bueno repite con
+    ejecutar=True; favoritas=False no copia ninguna."""
     f = _folder(carpeta)
-    return _post("/api/close_folder", {"folder_id": f["id"], "execute": ejecutar})
+    payload: dict = {"folder_id": f["id"], "execute": ejecutar}
+    if ejecutar and favoritas:
+        report = _post("/api/close_folder", {"folder_id": f["id"], "execute": False})["report"]
+        payload["favs"] = [
+            {"photo_id": fv["id"], "nombre": fv["nombre"]}
+            for fv in report.get("favoritas", [])
+            if not fv.get("ya_en_favs")
+        ]
+    return _post("/api/close_folder", payload)
 
 
 @mcp.tool()

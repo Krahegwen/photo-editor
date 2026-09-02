@@ -120,9 +120,15 @@ class ExportRequest(BaseModel):
     force: bool = False
 
 
+class FavItem(BaseModel):
+    photo_id: int
+    nombre: str
+
+
 class CloseFolderRequest(BaseModel):
     folder_id: int
     execute: bool = False
+    favs: list[FavItem] | None = None  # 5★ confirmadas en el diálogo → FAVS
 
 
 class StackRequest(BaseModel):
@@ -777,8 +783,9 @@ def close_folder(req: CloseFolderRequest):
         raise HTTPException(404, str(exc)) from exc
     if not req.execute:
         return {"report": report, "job": None}
+    favs = [{"id": f.photo_id, "nombre": f.nombre} for f in (req.favs or [])]
     job = jobs.submit(
-        "close", f"Cerrar {report['folder']}", closefolder.job_fn(req.folder_id)
+        "close", f"Cerrar {report['folder']}", closefolder.job_fn(req.folder_id, favs)
     )
     return {"report": report, "job": job}
 

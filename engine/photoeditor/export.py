@@ -54,7 +54,9 @@ def _save_tif16(img16: np.ndarray, dest: Path) -> None:
     cv2.imwrite(str(dest), img16[:, :, ::-1], [cv2.IMWRITE_TIFF_COMPRESSION, 5])
 
 
-def _export_one(root: Path, row, preset_name: str, force: bool) -> dict:
+def _export_one(root: Path, row, preset_name: str, force: bool, favs_name: str | None = None) -> dict:
+    """favs_name: nombre con el que se copia a FAVS (cerrar carpeta usa
+    '<carpeta> <HHhMM>'); por defecto, el stem de la foto."""
     p = PRESETS[preset_name]
     folder = row["folder"]
     stem = row["stem"]
@@ -92,13 +94,13 @@ def _export_one(root: Path, row, preset_name: str, force: bool) -> dict:
         favs = root / FAVS_DIR
         favs.mkdir(exist_ok=True)
         for t in targets:
-            fav_t = favs / t.name
+            fav_t = favs / ((favs_name + t.suffix) if favs_name else t.name)
             if fav_t.exists() and not force:
                 return {"stem": stem, "ok": False,
                         "error": f"exportado en {folder} pero ya existía en FAVS: {t.name}",
                         "written": written}
             shutil.copy2(t, fav_t)
-            written.append(f"{FAVS_DIR}/{t.name}")
+            written.append(f"{FAVS_DIR}/{fav_t.name}")
 
     return {"stem": stem, "ok": True, "written": written}
 

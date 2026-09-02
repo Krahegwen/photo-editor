@@ -75,16 +75,31 @@ export interface CloseReportItem {
   motivo: string
 }
 
+export interface FavCandidate {
+  id: number
+  stem: string
+  ext: string
+  taken_at: string | null
+  nombre: string
+  tiene_jpg: boolean
+  tiene_tif: boolean
+  revelar: boolean
+  ya_en_favs: boolean
+}
+
 export interface CloseReport {
   folder_id: number
   folder: string
   borrar: CloseReportItem[]
   pendientes: string[]
   tiff_sin_favs: string[]
+  favoritas: FavCandidate[]
   finales: number
   total_fotos: number
   trashed?: string[]
   errors?: string[]
+  favs_copiadas?: { stem: string; nombre: string; archivos: string[] }[]
+  favs_errores?: string[]
 }
 
 export interface Health {

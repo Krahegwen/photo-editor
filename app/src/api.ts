@@ -87,10 +87,11 @@ export const api = {
     }),
   timelapse: (photoIds: number[], fps = 24, force = false) =>
     post<Job>('/api/timelapse', { photo_ids: photoIds, fps, force }),
-  closeFolder: (folderId: number, execute = false) =>
+  closeFolder: (folderId: number, execute = false, favs?: { photo_id: number; nombre: string }[]) =>
     post<{ report: CloseReport; job: Job | null }>('/api/close_folder', {
       folder_id: folderId,
       execute,
+      favs,
     }),
   jobs: (limit = 20) => req<Job[]>(`/api/jobs?limit=${limit}`),
   job: (id: string) => req<Job>(`/api/jobs/${id}`),
