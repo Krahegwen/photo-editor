@@ -84,7 +84,7 @@ def job_fn(folder_id: int):
                 job["progress"]["done"] += 1
             d = root / report["folder"]
             if d.is_dir():
-                scan._scan_folder(con, d)
+                scan._scan_folder(con, d, report["folder"])
         finally:
             con.close()
         trash.audit("cerrar_carpeta", trashed)

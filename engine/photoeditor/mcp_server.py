@@ -54,16 +54,17 @@ def _post(path: str, payload: dict) -> dict:
 
 def _folder(nombre: str) -> dict:
     folders = _get("/api/folders")
-    exact = [f for f in folders if f["name"].lower() == nombre.lower()]
+    n = nombre.lower()
+    exact = [f for f in folders if n in (f["name"].lower(), f.get("label", "").lower())]
     if exact:
         return exact[0]
-    subs = [f for f in folders if nombre.lower() in f["name"].lower()]
+    subs = [f for f in folders if n in f["name"].lower() or n in f.get("label", "").lower()]
     if len(subs) == 1:
         return subs[0]
     if not subs:
         raise ToolError(f"No encuentro ninguna carpeta que contenga '{nombre}'")
     raise ToolError(
-        "Nombre ambiguo, coincide con: " + ", ".join(f["name"] for f in subs[:8])
+        "Nombre ambiguo, coincide con: " + ", ".join(f.get("label", f["name"]) for f in subs[:8])
     )
 
 
@@ -111,8 +112,20 @@ def estado() -> dict:
 def listar_carpetas() -> list[dict]:
     """Lista las carpetas del archivo (orden descendente, FAVS arriba) con su nº de fotos."""
     return [
-        {"carpeta": f["name"], "fotos": f["photo_count"]} for f in _get("/api/folders")
+        {"carpeta": f.get("label", f["name"]), "fotos": f["photo_count"]}
+        for f in _get("/api/folders")
     ]
+
+
+@mcp.tool()
+def raiz(ruta: str | None = None) -> dict:
+    """Carpeta raíz del archivo de fotos. Sin argumentos la consulta (y dice
+    cuántas subcarpetas y fotos sueltas se indexan); con `ruta` la cambia y
+    lanza un escaneo completo. Vale una raíz con subcarpetas de fecha o una
+    carpeta con fotos directamente."""
+    if ruta:
+        return _post("/api/root", {"root": ruta})
+    return _get("/api/root")
 
 
 @mcp.tool()

@@ -4,6 +4,19 @@ export interface Folder {
   photo_count: number
   last_scan: number | null
   exists?: boolean
+  label?: string
+}
+
+export interface RootInfo {
+  root: string | null
+  existe: boolean
+  subcarpetas?: number
+  fotos_sueltas?: number
+  ejemplos?: string[]
+  error?: string
+  por_entorno?: boolean
+  aviso?: string
+  job?: Job
 }
 
 export interface GpuInfo {

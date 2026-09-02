@@ -33,9 +33,34 @@ def folder_dirs(root: Path) -> list[Path]:
     return out
 
 
-def _scan_folder(con, folder: Path) -> None:
-    con.execute("INSERT OR IGNORE INTO folders(name) VALUES(?)", (folder.name,))
-    fid = con.execute("SELECT id FROM folders WHERE name=?", (folder.name,)).fetchone()[0]
+def _has_images(d: Path) -> bool:
+    try:
+        return any(p.is_file() and p.suffix.lower() in IMAGE_EXTS for p in d.iterdir())
+    except OSError:
+        return False
+
+
+def inspect_root(path: Path) -> dict:
+    """Qué se indexaría en esa ruta: subcarpetas con fotos y fotos sueltas en
+    la propia raíz (que pasan a ser una carpeta más, la de la raíz)."""
+    subs = [d for d in folder_dirs(path) if _has_images(d)]
+    sueltas = sum(1 for p in path.iterdir() if p.is_file() and p.suffix.lower() in IMAGE_EXTS)
+    return {"subcarpetas": len(subs), "fotos_sueltas": sueltas, "ejemplos": [d.name for d in subs[:4]]}
+
+
+def scan_targets(root: Path) -> list[tuple[Path, str]]:
+    """(directorio, nombre en el catálogo): las subcarpetas de fecha y, si la
+    raíz tiene fotos sueltas, la propia raíz como '.'."""
+    targets = [(d, d.name) for d in folder_dirs(root)]
+    if _has_images(root):
+        targets.insert(0, (root, config.ROOT_FOLDER))
+    return targets
+
+
+def _scan_folder(con, folder: Path, name: str | None = None) -> None:
+    name = name or folder.name
+    con.execute("INSERT OR IGNORE INTO folders(name) VALUES(?)", (name,))
+    fid = con.execute("SELECT id FROM folders WHERE name=?", (name,)).fetchone()[0]
     known = {
         (r["stem"], r["ext"]): r
         for r in con.execute(
@@ -89,17 +114,17 @@ def job_fn(only: list[str] | None):
         con = db.connect()
         try:
             root = config.get_root()
-            dirs = folder_dirs(root)
+            targets = scan_targets(root)
             if only:
                 wanted = set(only)
-                dirs = [d for d in dirs if d.name in wanted]
-            job["progress"]["total"] = len(dirs)
+                targets = [t for t in targets if t[1] in wanted]
+            job["progress"]["total"] = len(targets)
             adoptadas: list[str] = []
             if not only:
-                names = {d.name for d in dirs}
+                names = {n for _, n in targets}
                 known = {r["name"]: r["id"] for r in con.execute("SELECT id, name FROM folders")}
                 missing = [(n, fid) for n, fid in known.items() if n not in names]
-                new_dirs = [d for d in dirs if d.name not in known]
+                new_dirs = [d for d, n in targets if n not in known and n != config.ROOT_FOLDER]
                 # Carpeta renombrada desde fuera (Explorador): si un directorio
                 # nuevo tiene casi las mismas fotos que una carpeta desaparecida,
                 # es la misma → se adopta el nombre y se conservan métricas e ids.
@@ -127,11 +152,11 @@ def job_fn(only: list[str] | None):
                     else:
                         con.execute("DELETE FROM folders WHERE id=?", (fid,))
                 con.commit()
-            for d in dirs:
-                job["progress"]["current"] = d.name
-                _scan_folder(con, d)
+            for d, n in targets:
+                job["progress"]["current"] = config.display_name(n)
+                _scan_folder(con, d, n)
                 job["progress"]["done"] += 1
-            out = {"carpetas": len(dirs)}
+            out = {"carpetas": len(targets)}
             if adoptadas:
                 out["renombradas_detectadas"] = adoptadas
             return out

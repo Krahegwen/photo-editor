@@ -152,7 +152,7 @@ def job_fn(photo_ids: list[int], preset_name: str, force: bool = False):
             for name in touched:
                 d = root / name
                 if d.is_dir():
-                    scan._scan_folder(con, d)
+                    scan._scan_folder(con, d, name)
         finally:
             con.close()
         return {"preset": preset_name, "results": results}

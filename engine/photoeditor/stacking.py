@@ -749,7 +749,7 @@ def job_fn(photo_ids: list[int], mode: str, crop_px: int = 1200,
 
             con = db.connect()
             try:
-                scan._scan_folder(con, outdir)
+                scan._scan_folder(con, outdir, folder)
             finally:
                 con.close()
 

@@ -4,10 +4,29 @@ import { api } from './api'
 import CloseFolder from './components/CloseFolder.vue'
 import DeleteReview from './components/DeleteReview.vue'
 import StackDialog from './components/StackDialog.vue'
+import RootDialog from './components/RootDialog.vue'
 import Develop from './components/Develop.vue'
 import Loupe from './components/Loupe.vue'
 import PhotoCard from './components/PhotoCard.vue'
 import type { FilterKey, Folder, Health, Job, Photo, PresetKey, Recipe } from './types'
+
+// ------------------------------------------------------------- carpeta de fotos (raíz)
+
+const rootOpen = ref(false)
+// sin raíz configurada (primer arranque, o la carpeta ya no existe): pedirla
+watch(health, (h) => {
+  if (h && !h.ok) rootOpen.value = true
+})
+
+async function onRootSaved(info: { root: string | null; aviso?: string }) {
+  rootOpen.value = false
+  notice.value = info.aviso ?? `Carpeta de fotos: ${info.root} — escaneando…`
+  current.value = null
+  photos.value = []
+  await refreshJobs()
+}
+
+const folderLabel = (f: Folder | null | undefined) => f?.label ?? f?.name ?? ''
 
 // ------------------------------------------------------------- móvil en red local
 
@@ -340,6 +359,13 @@ function onKey(e: KeyboardEvent) {
     if (e.key === 'Escape') stackOpen.value = false
     return
   }
+  if (rootOpen.value || phoneOpen.value) {
+    if (e.key === 'Escape' && health.value?.ok) {
+      rootOpen.value = false
+      phoneOpen.value = false
+    }
+    return
+  }
   if (developOpen.value) return // Develop gestiona su propio teclado
 
   const list = filtered.value
@@ -416,7 +442,7 @@ onUnmounted(() => {
           :title="f.exists === false ? 'No está en disco: ¿renombrada desde el Explorador? Escanea el archivo' : ''"
           @click="select(f)"
         >
-          <span class="fname">{{ f.exists === false ? '⚠ ' : '' }}{{ f.name }}</span>
+          <span class="fname">{{ f.exists === false ? '⚠ ' : '' }}{{ folderLabel(f) }}</span>
           <span class="fcount">{{ f.photo_count }}</span>
         </button>
       </nav>
@@ -458,7 +484,7 @@ onUnmounted(() => {
         />
         <template v-else>
           <h1 :title="current ? 'Doble clic para renombrar' : ''" @dblclick="startRename">
-            {{ current?.name ?? 'Sin carpeta' }}
+            {{ current ? folderLabel(current) : 'Sin carpeta' }}
           </h1>
           <button v-if="current" class="ico" title="Renombrar carpeta" @click="startRename">
             ✎
@@ -493,6 +519,9 @@ onUnmounted(() => {
         >
           📱
         </button>
+        <button class="gpuchip" :title="`Carpeta de fotos: ${health?.root ?? 'sin configurar'}`" @click="rootOpen = true">
+          📁
+        </button>
       </header>
 
       <div v-if="phoneOpen && health?.lan" class="phone" @click.self="phoneOpen = false">
@@ -524,7 +553,7 @@ onUnmounted(() => {
       </div>
 
       <div v-if="current && current.exists === false" class="banner">
-        <b>⚠ La carpeta «{{ current.name }}» ya no está en disco.</b>
+        <b>⚠ La carpeta «{{ folderLabel(current) }}» ya no está en disco.</b>
         Si la has renombrado o movido desde el Explorador, escanea el archivo: el
         catálogo adopta el nuevo nombre conservando puntuaciones y métricas.
         <button class="pill" :disabled="runningKind('scan')" @click="startScan">
@@ -624,7 +653,7 @@ onUnmounted(() => {
           :key="p.id"
           :photo="p"
           :selected="i === selIdx"
-          :folder-name="current?.name"
+          :folder-name="folderLabel(current)"
           @select="selectAt(i)"
           @open="openLoupe(i)"
         />
@@ -659,7 +688,7 @@ onUnmounted(() => {
     <DeleteReview
       v-if="deleteOpen && current"
       :photos="photos.filter((p) => p.rating === 1)"
-      :folder-name="current.name"
+      :folder-name="folderLabel(current)"
       @close="deleteOpen = false"
       @done="onDeleted"
     />
@@ -671,10 +700,12 @@ onUnmounted(() => {
       @started="onCloseFolderStarted"
     />
 
+    <RootDialog v-if="rootOpen" @close="rootOpen = false" @saved="onRootSaved" />
+
     <StackDialog
       v-if="stackOpen && current"
       :photos="filtered"
-      :folder-name="current.name"
+      :folder-name="folderLabel(current)"
       @close="stackOpen = false"
       @started="stackOpen = false; refreshJobs()"
     />

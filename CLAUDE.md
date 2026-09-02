@@ -58,6 +58,13 @@ su política de archivo; nunca sobreescribe sin force.
 - Datos generados en `%LOCALAPPDATA%\photo-editor\` (catalog.db, cache/,
   config.json con la raíz de fotos).
 
+Raíz del archivo: `config.set_root` (config.json) + /api/root (GET inspecciona
+cualquier ruta, POST cambia y escanea, /browse abre tkinter en subproceso);
+RootDialog.vue sale solo si health.ok es false. Una raíz con fotos sueltas se
+indexa como carpeta `config.ROOT_FOLDER` ('.') y se muestra por su basename
+(`display_name`); al re-escanear carpetas SIEMPRE pasar el nombre del
+catálogo a `_scan_folder(con, dir, name)`.
+
 ## Reglas de oro
 
 - Fuente de verdad = archivos + sidecars `.xmp` (compatibles con Lightroom);

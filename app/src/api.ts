@@ -27,6 +27,10 @@ function post<T>(url: string, body: unknown): Promise<T> {
 export const api = {
   health: () => req<Health>('/api/health'),
   folders: () => req<Folder[]>('/api/folders'),
+  root: (path?: string) =>
+    req<RootInfo>(`/api/root${path ? `?path=${encodeURIComponent(path)}` : ''}`),
+  setRoot: (root: string) => post<RootInfo>('/api/root', { root }),
+  browseRoot: () => post<RootInfo>('/api/root/browse', {}),
   setGpu: (enabled: boolean) => post<GpuInfo>('/api/gpu', { enabled }),
   renameFolder: (folderId: number, name: string) =>
     post<{ ok: boolean; name: string; previews_migradas: number }>(

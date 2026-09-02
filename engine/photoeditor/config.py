@@ -38,3 +38,31 @@ def get_root() -> Path:
             f"Carpeta de fotos no configurada: define PHOTOED_ROOT o 'root' en {CONFIG_PATH}"
         )
     return root
+
+
+def set_root(path: str) -> Path:
+    """Guarda la raíz en config.json (la UI la elige) y refresca la caché."""
+    p = Path(path).expanduser()
+    if not str(path).strip() or not p.is_dir():
+        raise ValueError(f"No existe la carpeta: {path}")
+    cfg = _file_config()
+    cfg["root"] = str(p)
+    APP_DIR.mkdir(parents=True, exist_ok=True)
+    CONFIG_PATH.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+    get_root.cache_clear()
+    return p
+
+
+# Nombre interno de la propia raíz cuando contiene fotos sueltas (además de,
+# o en vez de, subcarpetas): `root / "."` sigue siendo la raíz.
+ROOT_FOLDER = "."
+
+
+def display_name(folder: str) -> str:
+    """Nombre visible de una carpeta del catálogo ('.' se muestra como la raíz)."""
+    if folder != ROOT_FOLDER:
+        return folder
+    try:
+        return get_root().name or "raíz"
+    except RuntimeError:
+        return "raíz"

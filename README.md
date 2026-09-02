@@ -22,6 +22,16 @@ Lightroom); SQLite es solo un índice reconstruible; la caché de previews va a
 `%LOCALAPPDATA%\photo-editor\`, nunca dentro del archivo de fotos; los RAW no
 se modifican jamás.
 
+## Carpeta de fotos
+
+La primera vez la app pide la raíz del archivo (botón 📁 de la cabecera
+después): vale una carpeta con subcarpetas por sesión (`240812 - Estrellas`,
+…) o directamente una carpeta con fotos, que se indexa como una única
+carpeta. «Examinar…» abre el explorador nativo en el PC del motor y la
+previsualización dice cuántas subcarpetas y fotos sueltas se van a indexar.
+Se guarda en `%LOCALAPPDATA%\photo-editor\config.json` (`"root"`); la
+variable `PHOTOED_ROOT` tiene prioridad.
+
 ## Configuración
 
 Raíz del archivo de fotos: variable de entorno `PHOTOED_ROOT`, o clave `root`

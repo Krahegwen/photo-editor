@@ -38,7 +38,7 @@ async function execute() {
   <div class="closer">
     <div class="topbar">
       <b>Cerrar carpeta</b>
-      <span class="dim">{{ folder.name }}</span>
+      <span class="dim">{{ folder.label ?? folder.name }}</span>
       <span class="sp"></span>
       <button
         class="danger"

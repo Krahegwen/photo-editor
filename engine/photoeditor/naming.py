@@ -20,4 +20,6 @@ def time_span(rows) -> str:
 
 
 def output_base(folder: str, kind: str, rows, extra: str = "") -> str:
-    return f"{folder} {time_span(rows)} {kind}{extra}"
+    from . import config  # la raíz ('.') se nombra por su carpeta real
+
+    return f"{config.display_name(folder)} {time_span(rows)} {kind}{extra}"

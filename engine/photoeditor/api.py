@@ -4,6 +4,8 @@ import datetime as dt
 import io
 import os
 import socket
+import subprocess
+import sys
 import threading
 import time
 
@@ -156,6 +158,72 @@ class GalleryRequest(BaseModel):
 # ---------------------------------------------------------------- estado
 
 
+# ---------------------------------------------------------------- raíz del archivo
+
+
+class RootRequest(BaseModel):
+    root: str
+
+
+@app.get("/api/root")
+def get_root_info(path: str | None = None):
+    """La raíz actual (o cualquier ruta, con ?path=) y qué se indexaría en ella."""
+    por_entorno = bool(os.environ.get("PHOTOED_ROOT"))
+    if path:
+        p = Path(path).expanduser()
+        if not p.is_dir():
+            return {"root": path, "existe": False}
+        return {"root": str(p), "existe": True, **scan.inspect_root(p)}
+    try:
+        root = config.get_root()
+    except RuntimeError as exc:
+        return {"root": None, "existe": False, "error": str(exc), "por_entorno": por_entorno}
+    return {"root": str(root), "existe": True, "por_entorno": por_entorno, **scan.inspect_root(root)}
+
+
+@app.post("/api/root")
+def set_root_endpoint(req: RootRequest):
+    """Cambia la carpeta de fotos y lanza un escaneo completo (las carpetas
+    de la raíz anterior desaparecen del catálogo; sus sidecars quedan en disco)."""
+    if os.environ.get("PHOTOED_ROOT"):
+        raise HTTPException(409, "La raíz viene fijada por PHOTOED_ROOT: cámbiala ahí")
+    if jobs.active():
+        raise HTTPException(409, "Espera a que termine la cola de trabajos")
+    try:
+        p = config.set_root(req.root)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    info = scan.inspect_root(p)
+    if info["subcarpetas"] == 0 and info["fotos_sueltas"] == 0:
+        info["aviso"] = "Ahí no hay fotos ni subcarpetas con fotos: el catálogo quedará vacío"
+    job = jobs.submit("scan", "Escanear archivo", scan.job_fn(None))
+    return {"root": str(p), "existe": True, **info, "job": job}
+
+
+@app.post("/api/root/browse")
+def browse_root():
+    """Explorador de carpetas nativo EN EL PC (tkinter en un subproceso, para
+    no mezclar su bucle con el servidor). Devuelve la ruta o null si se cancela."""
+    code = (
+        "import tkinter as tk, tkinter.filedialog as fd\n"
+        "r = tk.Tk(); r.withdraw(); r.attributes('-topmost', True)\n"
+        "print(fd.askdirectory(title='Carpeta de fotos de photo-editor') or '')\n"
+    )
+    try:
+        out = subprocess.run(
+            [sys.executable, "-c", code], capture_output=True, text=True, timeout=600
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise HTTPException(408, "El explorador no respondió") from exc
+    if out.returncode != 0:
+        raise HTTPException(500, f"No se pudo abrir el explorador: {out.stderr[-200:]}")
+    chosen = out.stdout.strip()
+    if not chosen:
+        return {"root": None}
+    p = Path(chosen)
+    return {"root": str(p), "existe": True, **scan.inspect_root(p)}
+
+
 def _lan_info() -> dict:
     """Dónde escucha el motor y con qué URLs se llega desde el móvil."""
     host = os.environ.get("PHOTOED_HOST") or config._file_config().get("host") or "127.0.0.1"
@@ -237,6 +305,7 @@ def list_folders():
         d = dict(r)
         # renombrada/movida desde fuera (Explorador): la UI avisa y ofrece escanear
         d["exists"] = bool(root and (root / r["name"]).is_dir())
+        d["label"] = config.display_name(r["name"])
         out.append(d)
     return out
 
@@ -276,6 +345,8 @@ def rename_folder(folder_id: int, req: RenameFolderRequest):
         if row is None:
             raise HTTPException(404, "Carpeta no encontrada")
         old = row["name"]
+        if old == config.ROOT_FOLDER:
+            raise HTTPException(409, "La raíz del archivo no se renombra desde aquí")
         if new == old:
             return {"ok": True, "name": old, "previews_migradas": 0}
         src, dst = root / old, root / new
