@@ -1,6 +1,9 @@
 # Arranca el motor de photo-editor (si no esta) y abre la UI en Brave.
 # ASCII puro a proposito: PowerShell 5.1 lee los .ps1 sin BOM como ANSI y
 # cualquier caracter fuera de ASCII rompe el parser sin mensaje visible.
+# -SoloMotor: arranca el motor si no esta y no abre el navegador (lo usa la
+# tarea programada photo-editor-engine).
+param([switch]$SoloMotor)
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path $PSScriptRoot -Parent
 $py = Join-Path $repo 'engine\.venv\Scripts\python.exe'
@@ -30,6 +33,8 @@ try {
     }
     if (-not $up) { throw "El motor no responde en $url tras 30 s." }
   }
+
+  if ($SoloMotor) { exit 0 }
 
   # Brave en ventana de aplicacion; si no esta, el navegador predeterminado.
   $brave = @(

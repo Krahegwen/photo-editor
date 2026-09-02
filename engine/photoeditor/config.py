@@ -8,10 +8,18 @@ import os
 from functools import lru_cache
 from pathlib import Path
 
-APP_DIR = Path(
-    os.environ.get("PHOTOED_HOME")
-    or Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "photo-editor"
-)
+def _local_appdata() -> Path:
+    """%LOCALAPPDATA%; si el proceso no lo trae (tareas programadas, servicios),
+    se deriva del perfil para no acabar en un directorio de datos fantasma."""
+    env = os.environ.get("LOCALAPPDATA")
+    if env:
+        return Path(env)
+    if os.name == "nt":
+        return Path.home() / "AppData" / "Local"
+    return Path.home() / ".local" / "share"
+
+
+APP_DIR = Path(os.environ.get("PHOTOED_HOME") or _local_appdata() / "photo-editor")
 CACHE_DIR = APP_DIR / "cache"
 DB_PATH = APP_DIR / "catalog.db"
 CONFIG_PATH = APP_DIR / "config.json"
@@ -31,12 +39,15 @@ def _file_config() -> dict:
 @lru_cache(maxsize=1)
 def get_root() -> Path:
     """Raíz del archivo fotográfico: PHOTOED_ROOT > config.json."""
-    env = os.environ.get("PHOTOED_ROOT")
-    root = Path(env) if env else Path(_file_config().get("root", ""))
-    if not str(root).strip() or not root.is_dir():
+    raw = os.environ.get("PHOTOED_ROOT") or str(_file_config().get("root", ""))
+    # Path("") es "." (el cwd) y existe siempre: una raíz vacía NO es una raíz
+    if not raw.strip() or raw.strip() == ".":
         raise RuntimeError(
             f"Carpeta de fotos no configurada: define PHOTOED_ROOT o 'root' en {CONFIG_PATH}"
         )
+    root = Path(raw).expanduser()
+    if not root.is_absolute() or not root.is_dir():
+        raise RuntimeError(f"La carpeta de fotos no existe o no es absoluta: {raw}")
     return root
 
 
