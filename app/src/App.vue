@@ -9,6 +9,11 @@ import Loupe from './components/Loupe.vue'
 import PhotoCard from './components/PhotoCard.vue'
 import type { FilterKey, Folder, Health, Job, Photo, PresetKey, Recipe } from './types'
 
+// ------------------------------------------------------------- móvil en red local
+
+const phoneOpen = ref(false)
+const phoneUrl = computed(() => health.value?.lan?.urls[0] ?? '')
+
 // ------------------------------------------------------------- GPU en caliente
 
 async function toggleGpu() {
@@ -479,7 +484,44 @@ onUnmounted(() => {
           {{ health.gpu.disponible ? (health.gpu.activa ? 'GPU' : 'CPU') : 'CPU' }}
           <span v-if="health.gpu.disponible" class="dot"></span>
         </button>
+        <button
+          v-if="health?.lan"
+          class="gpuchip"
+          :class="{ on: health.lan.abierto }"
+          title="Abrir en el móvil (red local)"
+          @click="phoneOpen = !phoneOpen"
+        >
+          📱
+        </button>
       </header>
+
+      <div v-if="phoneOpen && health?.lan" class="phone" @click.self="phoneOpen = false">
+        <div class="phonebox">
+          <div class="head">
+            <b>Abrir en el móvil</b>
+            <span class="spacer"></span>
+            <button class="pill" @click="phoneOpen = false">✕</button>
+          </div>
+          <template v-if="health.lan.abierto && phoneUrl">
+            <img class="qr" :src="`/api/qr.png?text=${encodeURIComponent(phoneUrl)}`" alt="QR" />
+            <div class="url">{{ phoneUrl }}</div>
+            <p class="dim">
+              Misma WiFi. Si no abre, el cortafuegos de Windows tiene que dejar pasar el
+              puerto {{ health.lan.puerto }}: ejecuta <code>launcher\firewall.ps1</code> una vez
+              (pide permisos de administrador). En el móvil, «Añadir a pantalla de inicio»
+              la deja como app.
+            </p>
+            <p v-if="health.lan.urls.length > 1" class="dim">
+              Otras direcciones: {{ health.lan.urls.slice(1).join(' · ') }}
+            </p>
+          </template>
+          <p v-else class="dim">
+            El motor solo escucha en 127.0.0.1. Para la red local pon
+            <code>"host": "0.0.0.0"</code> en <code>%LOCALAPPDATA%\photo-editor\config.json</code>
+            y reinicia el motor.
+          </p>
+        </div>
+      </div>
 
       <div v-if="current && current.exists === false" class="banner">
         <b>⚠ La carpeta «{{ current.name }}» ya no está en disco.</b>
@@ -831,6 +873,29 @@ h1 { font-size: 16px; margin: 0; }
   .grid { padding: 10px 12px; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
   .keys { display: none; }
 }
+.phone {
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+  background: rgba(10, 11, 15, 0.55);
+  display: flex;
+  align-items: safe center;
+  justify-content: center;
+  padding: 20px;
+}
+.phonebox {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px 16px;
+  width: min(440px, 100%);
+  text-align: center;
+}
+.phonebox .head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; text-align: left; }
+.phonebox .qr { width: 220px; height: 220px; image-rendering: pixelated; border-radius: 8px; background: #fff; }
+.phonebox .url { font-size: 20px; font-weight: 600; margin: 10px 0 6px; user-select: all; }
+.phonebox .dim { font-size: 12.5px; color: var(--dim); text-align: left; }
+.phonebox code { background: var(--panel2); padding: 1px 5px; border-radius: 4px; }
 .folder.missing .fname { color: #ffb38a; }
 .banner {
   margin: 10px 14px 0;

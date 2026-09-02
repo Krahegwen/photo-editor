@@ -81,7 +81,11 @@ su política de archivo; nunca sobreescribe sin force.
   Todo cae a CPU ante cualquier error; PHOTOED_GPU=0 la apaga. El repo es
   público: el camino CPU es el de referencia y debe seguir funcionando.
 - Timelapse usa h264_nvenc si el ffmpeg lo trae y funciona; si no, libx264.
-- /api/health informa de gpu y threads.
+- /api/health informa de gpu, threads y lan (host, urls para el móvil).
+- Red local: host por PHOTOED_HOST o "host" en config.json (Diego: 0.0.0.0);
+  por defecto 127.0.0.1 porque la API no tiene auth. Cortafuegos: solo con
+  launcher/firewall.ps1 ejecutado por el usuario (nunca desde Claude). El 📱
+  de la cabecera da URL + QR (/api/qr.png).
 
 ## Comandos
 

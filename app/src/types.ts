@@ -80,6 +80,7 @@ export interface Health {
   version: string
   gpu?: GpuInfo
   threads?: number
+  lan?: { host: string; abierto: boolean; urls: string[]; puerto: number }
 }
 
 export interface Exif {

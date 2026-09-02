@@ -1,8 +1,13 @@
 """API REST local. La UI Vue habla con esto; en F3 el servidor MCP también."""
 import base64
 import datetime as dt
+import io
+import os
+import socket
 import threading
 import time
+
+from fastapi.responses import Response as _RawResponse
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -151,6 +156,41 @@ class GalleryRequest(BaseModel):
 # ---------------------------------------------------------------- estado
 
 
+def _lan_info() -> dict:
+    """Dónde escucha el motor y con qué URLs se llega desde el móvil."""
+    host = os.environ.get("PHOTOED_HOST") or config._file_config().get("host") or "127.0.0.1"
+    port = int(os.environ.get("PHOTOED_PORT", "8177"))
+    ips: list[str] = []
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            ip = info[4][0]
+            if ip.startswith(("127.", "169.254.")) or ip in ips:
+                continue
+            ips.append(ip)
+    except OSError:
+        pass
+    # la WiFi/Ethernet doméstica (192.168.x / 10.x) antes que los switches virtuales
+    ips.sort(key=lambda ip: (not ip.startswith("192.168."), not ip.startswith("10."), ip))
+    return {
+        "host": host,
+        "abierto": host in ("0.0.0.0", "::"),
+        "urls": [f"http://{ip}:{port}/" for ip in ips],
+        "puerto": port,
+    }
+
+
+@app.get("/api/qr.png")
+def qr_png(text: str):
+    try:
+        import qrcode
+    except ImportError as exc:
+        raise HTTPException(501, "qrcode no instalado") from exc
+    img = qrcode.make(text[:512], box_size=6, border=2)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return _RawResponse(content=buf.getvalue(), media_type="image/png")
+
+
 @app.get("/api/health")
 def health():
     try:
@@ -168,6 +208,7 @@ def health():
         "root": root,
         "gpu": gpu.info(),
         "threads": parallel.workers(),
+        "lan": _lan_info(),
         "root_error": root_error,
         "folders": folders,
         "photos": photos,

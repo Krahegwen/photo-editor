@@ -74,6 +74,17 @@ la app hay un interruptor GPU/CPU en caliente; `GET /api/health` dice qué
 está activo. El timelapse usa NVENC cuando el ffmpeg embebido y el driver lo
 permiten.
 
+## Desde el móvil (red local)
+
+Por defecto el motor escucha solo en `127.0.0.1` (la API no lleva
+autenticación). Para usarlo desde el móvil en la misma WiFi:
+
+1. `"host": "0.0.0.0"` en `%LOCALAPPDATA%\photo-editor\config.json` (o
+   `PHOTOED_HOST=0.0.0.0`) y reiniciar el motor.
+2. `launcher\firewall.ps1` una vez (pide administrador): abre el puerto 8177.
+3. En la app, el botón 📱 de la cabecera enseña la URL y un QR. En el
+   móvil, «Añadir a pantalla de inicio» la deja como app (PWA).
+
 ## Uso normal
 
 ```bash
