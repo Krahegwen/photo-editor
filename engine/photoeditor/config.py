@@ -9,14 +9,24 @@ from functools import lru_cache
 from pathlib import Path
 
 def _local_appdata() -> Path:
-    """%LOCALAPPDATA%; si el proceso no lo trae (tareas programadas, servicios),
-    se deriva del perfil para no acabar en un directorio de datos fantasma."""
+    """%LOCALAPPDATA% real del usuario.
+
+    - Si el proceso no lo trae (tareas programadas, servicios), se deriva del
+      perfil para no acabar en un directorio de datos fantasma.
+    - Si viene VIRTUALIZADO (procesos lanzados desde una app empaquetada MSIX,
+      p. ej. Claude Desktop: '...\\Packages\\<app>\\LocalCache\\Local'), se
+      des-virtualiza: si no, el motor arrancado desde ahí y el arrancado desde
+      el escritorio verían catálogos distintos."""
     env = os.environ.get("LOCALAPPDATA")
+    if os.name != "nt":
+        return Path(env) if env else Path.home() / ".local" / "share"
     if env:
-        return Path(env)
-    if os.name == "nt":
-        return Path.home() / "AppData" / "Local"
-    return Path.home() / ".local" / "share"
+        p = Path(env)
+        parts = [x.lower() for x in p.parts]
+        if "packages" in parts and "localcache" in parts:
+            return Path.home() / "AppData" / "Local"
+        return p
+    return Path.home() / "AppData" / "Local"
 
 
 APP_DIR = Path(os.environ.get("PHOTOED_HOME") or _local_appdata() / "photo-editor")

@@ -286,6 +286,7 @@ def health():
         "gpu": gpu.info(),
         "threads": parallel.workers(),
         "lan": _lan_info(),
+        "app_dir": str(config.APP_DIR),  # dónde viven catálogo, caché y config
         "root_error": root_error,
         "folders": folders,
         "photos": photos,

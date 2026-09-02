@@ -47,6 +47,25 @@ def _start_engine() -> bool:
     import sys
     from pathlib import Path
 
+    # Preferir la tarea programada photo-editor-engine: arranca FUERA del
+    # contenedor de Claude Desktop (MSIX virtualiza %LOCALAPPDATA%; un motor
+    # arrancado desde dentro vería otro catálogo).
+    if os.name == "nt":
+        try:
+            r = subprocess.run(
+                ["schtasks", "/Run", "/TN", "photo-editor-engine"],
+                capture_output=True, text=True, timeout=20,
+            )
+            if r.returncode == 0:
+                for _ in range(60):
+                    time.sleep(0.5)
+                    try:
+                        if httpx.get(f"{BASE}/api/health", timeout=2).status_code == 200:
+                            return True
+                    except httpx.HTTPError:
+                        pass
+        except (OSError, subprocess.SubprocessError):
+            pass
     flags = (0x00000008 | 0x00000200) if os.name == "nt" else 0  # DETACHED | NEW_PROCESS_GROUP
     try:
         proc = subprocess.Popen(
