@@ -31,14 +31,60 @@ mcp = MCPServer(
 )
 
 
+_last_engine_start = 0.0
+
+
+def _start_engine() -> bool:
+    """Si el motor no responde y BASE es esta máquina, lo arranca (mismo comando
+    que el launcher, proceso aparte) y espera hasta 30 s a que conteste."""
+    global _last_engine_start
+    if not BASE.startswith(("http://127.0.0.1", "http://localhost")):
+        return False
+    if time.time() - _last_engine_start < 60:
+        return False
+    _last_engine_start = time.time()
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    flags = (0x00000008 | 0x00000200) if os.name == "nt" else 0  # DETACHED | NEW_PROCESS_GROUP
+    try:
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "photoeditor"],
+            creationflags=flags, close_fds=True,
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+    except OSError:
+        return False
+    try:
+        appdir = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "photo-editor"
+        appdir.mkdir(parents=True, exist_ok=True)
+        (appdir / "engine.pid").write_text(str(proc.pid))
+    except OSError:
+        pass
+    for _ in range(60):
+        time.sleep(0.5)
+        try:
+            if httpx.get(f"{BASE}/api/health", timeout=2).status_code == 200:
+                return True
+        except httpx.HTTPError:
+            pass
+    return False
+
+
 def _req(method: str, path: str, **kwargs) -> httpx.Response:
     try:
         r = httpx.request(method, f"{BASE}{path}", timeout=120, **kwargs)
     except httpx.ConnectError as exc:
-        raise ToolError(
-            f"El motor de photo-editor no responde en {BASE}. "
-            "Arráncalo con launcher/photo-editor.ps1 (o python -m photoeditor en engine/)."
-        ) from exc
+        if not _start_engine():
+            raise ToolError(
+                f"El motor de photo-editor no responde en {BASE} y no he podido arrancarlo. "
+                "Arráncalo con launcher/photo-editor.ps1 (o python -m photoeditor en engine/)."
+            ) from exc
+        try:
+            r = httpx.request(method, f"{BASE}{path}", timeout=120, **kwargs)
+        except httpx.ConnectError as exc2:
+            raise ToolError(f"El motor de photo-editor sigue sin responder en {BASE}.") from exc2
     if r.status_code >= 400:
         raise ToolError(f"{r.status_code}: {r.text}")
     return r
