@@ -94,18 +94,63 @@ def job_fn(only: list[str] | None):
                 wanted = set(only)
                 dirs = [d for d in dirs if d.name in wanted]
             job["progress"]["total"] = len(dirs)
+            adoptadas: list[str] = []
             if not only:
                 names = {d.name for d in dirs}
-                for r in con.execute("SELECT id, name FROM folders").fetchall():
-                    if r["name"] not in names:
-                        con.execute("DELETE FROM folders WHERE id=?", (r["id"],))
+                known = {r["name"]: r["id"] for r in con.execute("SELECT id, name FROM folders")}
+                missing = [(n, fid) for n, fid in known.items() if n not in names]
+                new_dirs = [d for d in dirs if d.name not in known]
+                # Carpeta renombrada desde fuera (Explorador): si un directorio
+                # nuevo tiene casi las mismas fotos que una carpeta desaparecida,
+                # es la misma → se adopta el nombre y se conservan métricas e ids.
+                for old_name, fid in missing:
+                    stems = {
+                        r["stem"]
+                        for r in con.execute("SELECT stem FROM photos WHERE folder_id=?", (fid,))
+                    }
+                    if not stems:
+                        continue
+                    best, best_score = None, 0.0
+                    for d in new_dirs:
+                        on_disk = {p.stem for p in d.iterdir() if p.suffix.lower() in IMAGE_EXTS}
+                        if not on_disk:
+                            continue
+                        score = len(stems & on_disk) / max(len(stems), len(on_disk))
+                        if score > best_score:
+                            best, best_score = d, score
+                    if best is not None and best_score >= 0.8:
+                        con.execute("UPDATE folders SET name=? WHERE id=?", (best.name, fid))
+                        _migrate_preview_cache(con, fid, old_name, best.name)
+                        new_dirs.remove(best)
+                        adoptadas.append(f"{old_name} → {best.name}")
+                        names.add(best.name)
+                    else:
+                        con.execute("DELETE FROM folders WHERE id=?", (fid,))
                 con.commit()
             for d in dirs:
                 job["progress"]["current"] = d.name
                 _scan_folder(con, d)
                 job["progress"]["done"] += 1
-            return {"carpetas": len(dirs)}
+            out = {"carpetas": len(dirs)}
+            if adoptadas:
+                out["renombradas_detectadas"] = adoptadas
+            return out
         finally:
             con.close()
 
     return run
+
+
+def _migrate_preview_cache(con, fid: int, old: str, new: str) -> None:
+    """La caché de previews va por ruta relativa: al adoptar un renombrado se
+    mueven las entradas para no regenerarlas."""
+    from . import previews
+
+    for p in con.execute("SELECT stem, ext, mtime FROM photos WHERE folder_id=?", (fid,)):
+        for size in previews.SIZES:
+            a = previews._cache_path(f"{old}/{p['stem']}{p['ext']}", p["mtime"], size)
+            if a.exists():
+                try:
+                    a.replace(previews._cache_path(f"{new}/{p['stem']}{p['ext']}", p["mtime"], size))
+                except OSError:
+                    pass

@@ -185,9 +185,29 @@ def list_folders():
         rows = con.execute(
             "SELECT id, name, photo_count, last_scan FROM folders ORDER BY name DESC"
         ).fetchall()
-        return [dict(r) for r in rows]
     finally:
         con.close()
+    try:
+        root = config.get_root()
+    except RuntimeError:
+        root = None
+    out = []
+    for r in rows:
+        d = dict(r)
+        # renombrada/movida desde fuera (Explorador): la UI avisa y ofrece escanear
+        d["exists"] = bool(root and (root / r["name"]).is_dir())
+        out.append(d)
+    return out
+
+
+class GpuRequest(BaseModel):
+    enabled: bool
+
+
+@app.post("/api/gpu")
+def set_gpu(req: GpuRequest):
+    """Interruptor GPU/CPU en caliente (afecta a los trabajos que empiecen)."""
+    return gpu.set_enabled(req.enabled)
 
 
 class RenameFolderRequest(BaseModel):
@@ -333,6 +353,12 @@ def _photo_row(con, photo_id: int):
     ).fetchone()
     if row is None:
         raise HTTPException(404, "Foto no encontrada en el catálogo")
+    if not (config.get_root() / row["folder"]).is_dir():
+        raise HTTPException(
+            409,
+            f"La carpeta '{row['folder']}' ya no está en disco (¿renombrada desde el "
+            "Explorador?). Escanea el archivo para sincronizar el catálogo.",
+        )
     return row
 
 

@@ -3,6 +3,16 @@ export interface Folder {
   name: string
   photo_count: number
   last_scan: number | null
+  exists?: boolean
+}
+
+export interface GpuInfo {
+  disponible: boolean
+  activa: boolean
+  nombre?: string
+  motivo?: string
+  vram_libre_mb?: number
+  vram_total_mb?: number
 }
 
 export interface Photo {
@@ -68,6 +78,8 @@ export interface Health {
   folders: number
   photos: number
   version: string
+  gpu?: GpuInfo
+  threads?: number
 }
 
 export interface Exif {

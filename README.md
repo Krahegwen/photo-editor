@@ -63,11 +63,16 @@ sigma-clip, la detección de estrellas y la parte tonal del revelado —
 todo cae a CPU solo ante cualquier fallo:
 
 ```
-cd engine && uv sync --extra gpu   # CuPy + librerías CUDA en wheels de pip (sin CUDA Toolkit)
+cd engine
+uv sync --extra gpu            # si uv está en el PATH
+python -m uv sync --extra gpu  # si no (uv instalado como módulo)
 ```
 
-`PHOTOED_GPU=0` la desactiva; `GET /api/health` dice si está activa. El
-timelapse usa NVENC cuando el ffmpeg embebido y el driver lo permiten.
+O directamente `launcher\setup.ps1 -Gpu`, que resuelve `uv` como toque y
+compila la UI. `PHOTOED_GPU=0` la desactiva al arrancar y en la cabecera de
+la app hay un interruptor GPU/CPU en caliente; `GET /api/health` dice qué
+está activo. El timelapse usa NVENC cuando el ffmpeg embebido y el driver lo
+permiten.
 
 ## Uso normal
 

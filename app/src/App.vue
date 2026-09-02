@@ -9,6 +9,20 @@ import Loupe from './components/Loupe.vue'
 import PhotoCard from './components/PhotoCard.vue'
 import type { FilterKey, Folder, Health, Job, Photo, PresetKey, Recipe } from './types'
 
+// ------------------------------------------------------------- GPU en caliente
+
+async function toggleGpu() {
+  const g = health.value?.gpu
+  if (!g?.disponible) return
+  try {
+    const res = await api.setGpu(!g.activa)
+    if (health.value) health.value.gpu = res
+    notice.value = res.activa ? `GPU activada (${res.nombre})` : 'GPU apagada: todo en CPU'
+  } catch (e) {
+    error.value = String(e)
+  }
+}
+
 const health = ref<Health | null>(null)
 const folders = ref<Folder[]>([])
 const current = ref<Folder | null>(null)
@@ -393,10 +407,11 @@ onUnmounted(() => {
           v-for="f in folders"
           :key="f.id"
           class="folder"
-          :class="{ on: current?.id === f.id }"
+          :class="{ on: current?.id === f.id, missing: f.exists === false }"
+          :title="f.exists === false ? 'No está en disco: ¿renombrada desde el Explorador? Escanea el archivo' : ''"
           @click="select(f)"
         >
-          <span class="fname">{{ f.name }}</span>
+          <span class="fname">{{ f.exists === false ? '⚠ ' : '' }}{{ f.name }}</span>
           <span class="fcount">{{ f.photo_count }}</span>
         </button>
       </nav>
@@ -449,7 +464,31 @@ onUnmounted(() => {
         <span v-if="health" class="dim">
           catálogo: {{ health.photos }} fotos en {{ health.folders }} carpetas
         </span>
+        <button
+          v-if="health?.gpu"
+          class="gpuchip"
+          :class="{ on: health.gpu.activa, off: !health.gpu.disponible }"
+          :disabled="!health.gpu.disponible"
+          :title="
+            health.gpu.disponible
+              ? `${health.gpu.nombre} · ${health.gpu.vram_libre_mb} MB libres · clic para ${health.gpu.activa ? 'pasar a CPU' : 'activar la GPU'}`
+              : `Sin GPU: ${health.gpu.motivo}`
+          "
+          @click="toggleGpu"
+        >
+          {{ health.gpu.disponible ? (health.gpu.activa ? 'GPU' : 'CPU') : 'CPU' }}
+          <span v-if="health.gpu.disponible" class="dot"></span>
+        </button>
       </header>
+
+      <div v-if="current && current.exists === false" class="banner">
+        <b>⚠ La carpeta «{{ current.name }}» ya no está en disco.</b>
+        Si la has renombrado o movido desde el Explorador, escanea el archivo: el
+        catálogo adopta el nuevo nombre conservando puntuaciones y métricas.
+        <button class="pill" :disabled="runningKind('scan')" @click="startScan">
+          {{ runningKind('scan') ? 'Escaneando…' : 'Escanear archivo' }}
+        </button>
+      </div>
 
       <div class="toolbar">
         <button
@@ -543,6 +582,7 @@ onUnmounted(() => {
           :key="p.id"
           :photo="p"
           :selected="i === selIdx"
+          :folder-name="current?.name"
           @select="selectAt(i)"
           @open="openLoupe(i)"
         />
@@ -791,6 +831,37 @@ h1 { font-size: 16px; margin: 0; }
   .grid { padding: 10px 12px; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
   .keys { display: none; }
 }
+.folder.missing .fname { color: #ffb38a; }
+.banner {
+  margin: 10px 14px 0;
+  padding: 10px 14px;
+  border: 1px solid #7a4a33;
+  background: #2a1d17;
+  color: #ffd9c4;
+  border-radius: 8px;
+  font-size: 13px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.banner b { color: #ffb38a; }
+.gpuchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--panel2);
+  color: var(--dim);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.gpuchip.on { color: var(--txt); border-color: var(--ok); }
+.gpuchip.on .dot { background: var(--ok); }
+.gpuchip .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--dim); }
+.gpuchip:disabled { cursor: default; opacity: 0.6; }
 .rename {
   font-size: 17px;
   font-weight: 600;

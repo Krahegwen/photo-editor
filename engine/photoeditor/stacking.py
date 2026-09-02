@@ -117,7 +117,7 @@ def _detect_stars(
     locales. Devuelve (x, y) ordenadas por respuesta. Verificado: ~90 % de
     repetibilidad entre frames consecutivos en las Perseidas urbanas."""
     s = 1.0 if half else 2.0
-    if gpu.AVAILABLE:
+    if gpu.active():
         try:
             return _detect_stars_gpu(gray, excl, s, cap)
         except Exception:
@@ -331,7 +331,7 @@ def _sigma_clip_gpu(files: list[Path], H: int, W: int) -> np.ndarray:
 
 
 def _sigma_clip_stack(files: list[Path], H: int, W: int) -> np.ndarray:
-    if gpu.AVAILABLE:
+    if gpu.active():
         try:
             return _sigma_clip_gpu(files, H, W)
         except Exception:

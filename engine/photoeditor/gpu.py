@@ -35,9 +35,26 @@ else:
         REASON = f"{type(exc).__name__}: {exc}"[:160]
 
 
+# Interruptor en caliente (desde la web o el MCP): la GPU puede estar
+# disponible pero apagada por el usuario sin reiniciar el motor.
+enabled = True
+
+
+def active() -> bool:
+    return AVAILABLE and enabled
+
+
+def set_enabled(value: bool) -> dict:
+    global enabled
+    enabled = bool(value)
+    if not enabled:
+        release()
+    return info()
+
+
 def info() -> dict:
     if not AVAILABLE:
-        return {"activa": False, "motivo": REASON or "cupy no instalado"}
+        return {"disponible": False, "activa": False, "motivo": REASON or "cupy no instalado"}
     dev = cp.cuda.Device()
     free, total = dev.mem_info
     props = cp.cuda.runtime.getDeviceProperties(dev.id)
@@ -45,7 +62,8 @@ def info() -> dict:
     if isinstance(name, bytes):
         name = name.decode(errors="ignore")
     return {
-        "activa": True,
+        "disponible": True,
+        "activa": enabled,
         "nombre": name,
         "vram_libre_mb": int(free // 2**20),
         "vram_total_mb": int(total // 2**20),

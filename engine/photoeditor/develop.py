@@ -195,7 +195,7 @@ def apply_recipe(img: np.ndarray, recipe: dict, skip_crop: bool = False) -> np.n
     sobre numpy o cupy y caída a CPU ante cualquier fallo."""
     r = normalize(recipe)
     out = _geometry(img, r, skip_crop)
-    if gpu.AVAILABLE and out.size >= 3_000_000:
+    if gpu.active() and out.size >= 3_000_000:
         try:
             cp = gpu.cp
             res = _tonal(

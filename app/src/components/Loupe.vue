@@ -58,14 +58,10 @@ const exifRows = computed(() => {
 <template>
   <div class="loupe">
     <div class="topbar">
-      <b>{{ photo.stem }}{{ photo.ext }}</b>
-      <span class="dim">{{ index + 1 }} / {{ total }}</span>
-      <span v-for="fl in photo.flags" :key="fl" class="flag">{{ fl }}</span>
-      <span class="sp"></span>
-      <div class="zoombtns">
-        <button :class="{ on: zoom === 'fit' }" @click="zoom = 'fit'">Ajustar</button>
-        <button :class="{ on: zoom === 'half' }" @click="zoom = 'half'">50%</button>
-        <button :class="{ on: zoom === 'full' }" @click="zoom = 'full'">100%</button>
+      <div class="left">
+        <b>{{ photo.stem }}{{ photo.ext }}</b>
+        <span class="dim">{{ index + 1 }} / {{ total }}</span>
+        <span v-for="fl in photo.flags" :key="fl" class="flag">{{ fl }}</span>
       </div>
       <div class="ratebtns">
         <button
@@ -84,9 +80,16 @@ const exifRows = computed(() => {
           @click="emit('rate', photo.rating === 1 ? 0 : 1)"
         >✕</button>
       </div>
-      <button title="Revelar (D)" @click="emit('develop')">Revelar</button>
-      <button title="Info EXIF (I)" @click="toggleExif">ℹ</button>
-      <button title="Cerrar (Esc)" @click="emit('close')">✕</button>
+      <div class="right">
+        <div class="zoombtns">
+          <button :class="{ on: zoom === 'fit' }" @click="zoom = 'fit'">Ajustar</button>
+          <button :class="{ on: zoom === 'half' }" @click="zoom = 'half'">50%</button>
+          <button :class="{ on: zoom === 'full' }" @click="zoom = 'full'">100%</button>
+        </div>
+        <button title="Revelar (D)" @click="emit('develop')">Revelar</button>
+        <button title="Info EXIF (I)" @click="toggleExif">ℹ</button>
+        <button title="Cerrar (Esc)" @click="emit('close')">✕</button>
+      </div>
     </div>
 
     <div class="body">
@@ -121,14 +124,21 @@ const exifRows = computed(() => {
   flex-direction: column;
 }
 .topbar {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
   gap: 10px;
   padding: 8px 14px;
   background: var(--panel);
   border-bottom: 1px solid var(--line);
   font-size: 13.5px;
-  flex-wrap: wrap;
+}
+.topbar .left, .topbar .right { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.topbar .right { justify-self: end; }
+.topbar .ratebtns { justify-self: center; }
+@media (max-width: 720px) {
+  .topbar { display: flex; flex-wrap: wrap; }
+  .topbar .ratebtns { order: 3; width: 100%; justify-content: center; }
 }
 .dim { color: var(--dim); font-size: 12.5px; }
 .sp { flex: 1; }
@@ -151,8 +161,9 @@ button {
 button:hover { border-color: var(--acc); }
 button.on { background: var(--acc); color: #1a1408; border-color: var(--acc); font-weight: 600; }
 .zoombtns, .ratebtns { display: flex; gap: 4px; }
-.star { padding: 5px 7px; color: var(--dim); }
+.star { padding: 3px 10px; font-size: 20px; line-height: 1.2; color: var(--dim); }
 .star.on { background: var(--panel2); color: var(--acc); border-color: var(--acc); }
+.ratebtns .clear, .ratebtns .x { padding: 5px 10px; font-size: 14px; }
 .x.on { background: var(--no); border-color: var(--no); color: #fff; }
 .body {
   flex: 1;

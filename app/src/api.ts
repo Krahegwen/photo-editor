@@ -27,6 +27,7 @@ function post<T>(url: string, body: unknown): Promise<T> {
 export const api = {
   health: () => req<Health>('/api/health'),
   folders: () => req<Folder[]>('/api/folders'),
+  setGpu: (enabled: boolean) => post<GpuInfo>('/api/gpu', { enabled }),
   renameFolder: (folderId: number, name: string) =>
     post<{ ok: boolean; name: string; previews_migradas: number }>(
       `/api/folders/${folderId}/rename`,

@@ -1,14 +1,17 @@
 <script setup lang="ts">
 import type { Photo } from '../types'
 
-defineProps<{ photo: Photo; selected: boolean }>()
+const props = defineProps<{ photo: Photo; selected: boolean; folderName?: string }>()
 const emit = defineEmits<{ select: []; open: [] }>()
 
-// Fotos de cámara: los 4 dígitos finales. Salidas con nombre largo
-// ('<carpeta> - trails 0202-0217', samples con espacios…): lo que sigue al
-// último ' - ', que es la parte que distingue.
+// Fotos de cámara: los 4 dígitos finales. Salidas del programa
+// ('<carpeta> 02h02-02h17 trails'): lo que sigue al nombre de la carpeta.
+// Otros nombres largos: lo que sigue al último ' - '.
 const last4 = (s: string) => {
   if (/^[A-Za-z_]*\d{4,5}$/.test(s)) return s.slice(-4)
+  if (props.folderName && s.startsWith(props.folderName + ' ')) {
+    return s.slice(props.folderName.length + 1)
+  }
   const i = s.lastIndexOf(' - ')
   return i >= 0 ? s.slice(i + 3) : s.slice(-4)
 }
