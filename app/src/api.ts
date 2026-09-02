@@ -10,9 +10,32 @@ import type {
   Recipe,
 } from './types'
 
+export class ApiError extends Error {
+  status: number
+  constructor(status: number, message: string) {
+    super(message)
+    this.status = status
+  }
+}
+
 async function req<T>(url: string, init?: RequestInit): Promise<T> {
-  const r = await fetch(url, init)
-  if (!r.ok) throw new Error(`${r.status}: ${await r.text()}`)
+  let r: Response
+  try {
+    r = await fetch(url, init)
+  } catch {
+    throw new ApiError(0, 'No hay conexión con el motor (¿está arrancado?)')
+  }
+  if (!r.ok) {
+    const text = await r.text()
+    let msg = text
+    try {
+      const j = JSON.parse(text)
+      msg = typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail ?? j)
+    } catch {
+      /* texto plano */
+    }
+    throw new ApiError(r.status, msg || r.statusText)
+  }
   return r.json() as Promise<T>
 }
 

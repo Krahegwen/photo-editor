@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { api } from './api'
+import { api, ApiError } from './api'
+import { dismissErrors, toast } from './toasts'
+import Toasts from './components/Toasts.vue'
 import CloseFolder from './components/CloseFolder.vue'
 import DeleteReview from './components/DeleteReview.vue'
 import StackDialog from './components/StackDialog.vue'
@@ -14,7 +16,7 @@ import type { FilterKey, Folder, Health, Job, Photo, PresetKey, Recipe } from '.
 
 async function onRootSaved(info: { root: string | null; aviso?: string }) {
   rootOpen.value = false
-  notice.value = info.aviso ?? `Carpeta de fotos: ${info.root} — escaneando…`
+  toast(info.aviso ?? `Carpeta de fotos: ${info.root} — escaneando…`, info.aviso ? 'warn' : 'info')
   current.value = null
   photos.value = []
   await refreshJobs()
@@ -35,9 +37,9 @@ async function toggleGpu() {
   try {
     const res = await api.setGpu(!g.activa)
     if (health.value) health.value.gpu = res
-    notice.value = res.activa ? `GPU activada (${res.nombre})` : 'GPU apagada: todo en CPU'
+    toast(res.activa ? `GPU activada (${res.nombre})` : 'GPU apagada: todo en CPU', 'info')
   } catch (e) {
-    error.value = String(e)
+    fail(e)
   }
 }
 
@@ -45,8 +47,13 @@ const health = ref<Health | null>(null)
 const folders = ref<Folder[]>([])
 const current = ref<Folder | null>(null)
 const photos = ref<Photo[]>([])
-const error = ref<string | null>(null)
-const notice = ref<string | null>(null)
+// avisos: snackbars con cola (toasts.ts); los errores 4xx son avisos que se
+// cierran solos, el resto se queda hasta que se cierra a mano
+function fail(e: unknown) {
+  const status = e instanceof ApiError ? e.status : -1
+  const msg = e instanceof Error ? e.message : String(e)
+  toast(msg, status >= 400 && status < 500 ? 'warn' : 'error')
+}
 const loadingPhotos = ref(false)
 
 const filter = ref<FilterKey>('all')
@@ -98,9 +105,9 @@ async function refreshJobs() {
     jobsWereActive = false
     const failed = jobs.value.filter((j) => j.state === 'error').slice(0, 2)
     if (failed.length) {
-      error.value = failed.map((j) => `${j.title}: ${j.error}`).join(' · ')
+      failed.forEach((j) => toast(`${j.title}: ${j.error}`, 'error'))
     }
-    notice.value = 'Trabajos terminados'
+    toast('Trabajos terminados', 'ok')
     await loadFolders()
     await reloadPhotos()
   }
@@ -163,10 +170,10 @@ async function saveRename() {
   if (!name || name === current.value.name) return
   try {
     const r = await api.renameFolder(current.value.id, name)
-    notice.value = `Carpeta renombrada: ${r.name}`
+    toast(`Carpeta renombrada: ${r.name}`, 'ok')
     await loadFolders()
   } catch (e) {
-    error.value = String(e)
+    fail(e)
   }
 }
 
@@ -221,7 +228,7 @@ async function rate(photo: Photo, n: number) {
     if (!r?.ok) throw new Error(r?.error ?? 'error desconocido')
   } catch (e) {
     photo.rating = prev
-    error.value = `No pude guardar el rating: ${e}`
+    toast(`No pude guardar el rating: ${e instanceof Error ? e.message : e}`, 'error')
   }
 }
 
@@ -236,23 +243,23 @@ async function markSuspects() {
 // ------------------------------------------------------------- acciones (jobs)
 
 async function startScan() {
-  error.value = null
+  dismissErrors()
   try {
     await api.scan()
     await refreshJobs()
   } catch (e) {
-    error.value = String(e)
+    fail(e)
   }
 }
 
 async function startMetrics() {
   if (!current.value) return
-  error.value = null
+  dismissErrors()
   try {
     await api.metrics(current.value.id)
     await refreshJobs()
   } catch (e) {
-    error.value = String(e)
+    fail(e)
   }
 }
 
@@ -260,12 +267,12 @@ async function startExport() {
   if (!filtered.value.length || runningKind('export')) return
   if (!window.confirm(`¿Exportar ${filtered.value.length} fotos con el preset «${exportPreset.value}»?`))
     return
-  error.value = null
+  dismissErrors()
   try {
     await api.export(filtered.value.map((p) => p.id), exportPreset.value)
     await refreshJobs()
   } catch (e) {
-    error.value = String(e)
+    fail(e)
   }
 }
 
@@ -278,7 +285,7 @@ async function closeDevelop() {
 
 function onCopyRecipe(r: Recipe) {
   copiedRecipe.value = r
-  notice.value = 'Receta copiada — pégala desde la barra de filtros'
+  toast('Receta copiada — pégala desde la barra de filtros', 'info')
 }
 
 async function pasteRecipe() {
@@ -288,7 +295,7 @@ async function pasteRecipe() {
     return
   const res = await api.copyRecipe(r, filtered.value.map((p) => p.id))
   const bad = res.results.filter((x) => !x.ok).length
-  notice.value = `Receta aplicada a ${res.results.length - bad} fotos${bad ? ` · ${bad} errores` : ''}`
+  toast(`Receta aplicada a ${res.results.length - bad} fotos${bad ? ` · ${bad} errores` : ''}`, bad ? 'warn' : 'ok')
   await reloadPhotos()
 }
 
@@ -296,10 +303,11 @@ async function pasteRecipe() {
 
 function onDeleted(trashed: string[], errors: string[]) {
   deleteOpen.value = false
-  notice.value = `${trashed.length} fotos enviadas a la papelera${
-    errors.length ? ` · ${errors.length} errores` : ''
-  }`
-  if (errors.length) error.value = errors.join(' · ')
+  toast(
+    `${trashed.length} fotos enviadas a la papelera${errors.length ? ` · ${errors.length} errores` : ''}`,
+    errors.length ? 'warn' : 'ok',
+  )
+  errors.forEach((err) => toast(err, 'error'))
   reloadPhotos()
   loadFolders()
 }
@@ -414,7 +422,7 @@ onMounted(async () => {
     await loadFolders()
     await refreshJobs()
   } catch (e) {
-    error.value = String(e)
+    fail(e)
   }
 })
 onUnmounted(() => {
@@ -637,9 +645,6 @@ onUnmounted(() => {
         </button>
       </div>
 
-      <div v-if="notice" class="notice" @click="notice = null">{{ notice }}</div>
-      <div v-if="error" class="err big" @click="error = null">{{ error }}</div>
-
       <div v-if="health && !health.ok" class="err big">{{ health.root_error }}</div>
       <div v-else-if="!folders.length && !loadingPhotos" class="empty">
         Catálogo vacío — pulsa «Escanear archivo» para indexar tus carpetas.
@@ -700,6 +705,8 @@ onUnmounted(() => {
     />
 
     <RootDialog v-if="rootOpen" @close="rootOpen = false" @saved="onRootSaved" />
+
+    <Toasts />
 
     <StackDialog
       v-if="stackOpen && current"
@@ -834,15 +841,6 @@ h1 { font-size: 16px; margin: 0; }
   cursor: pointer;
 }
 
-.notice {
-  margin: 10px 18px 0;
-  background: var(--panel);
-  border: 1px solid var(--ok);
-  border-radius: 8px;
-  padding: 8px 12px;
-  font-size: 13px;
-  cursor: pointer;
-}
 .err { color: #ff9c8f; padding: 8px 12px; font-size: 13px; }
 .err.big {
   margin: 10px 18px 0;
