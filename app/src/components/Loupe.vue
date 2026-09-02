@@ -60,6 +60,9 @@ const exifRows = computed(() => {
     <div class="topbar">
       <div class="left">
         <b>{{ photo.stem }}{{ photo.ext }}</b>
+        <span v-if="(photo.formats?.length ?? 0) > 1" class="dim" title="Versiones de esta foto">
+          + {{ photo.formats.slice(1).join(' · ') }}
+        </span>
         <span class="dim">{{ index + 1 }} / {{ total }}</span>
         <span v-for="fl in photo.flags" :key="fl" class="flag">{{ fl }}</span>
       </div>

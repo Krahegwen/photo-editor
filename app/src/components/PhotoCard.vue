@@ -1,7 +1,16 @@
 <script setup lang="ts">
+import { computed } from 'vue'
+import { isRaw } from '../formats'
 import type { Photo } from '../types'
 
 const props = defineProps<{ photo: Photo; selected: boolean; folderName?: string }>()
+
+// Versiones de la foto: si la principal es RAW, solo se listan las demás
+// (JPG, TIF = ya revelada); si no hay RAW, se listan todas.
+const versionChips = computed(() => {
+  const fm = props.photo.formats ?? []
+  return isRaw(props.photo.ext) ? fm.slice(1) : fm
+})
 const emit = defineEmits<{ select: []; open: [] }>()
 
 // Fotos de cámara: los 4 dígitos finales. Salidas del programa
@@ -28,7 +37,7 @@ const last4 = (s: string) => {
     <img :src="`/api/preview/${photo.id}?s=320`" loading="lazy" :alt="photo.stem" />
     <div class="meta">
       <b>{{ last4(photo.stem) }}</b>
-      <span v-if="photo.ext !== '.arw'" class="ext">{{ photo.ext.slice(1).toUpperCase() }}</span>
+      <span v-for="f in versionChips" :key="f" class="ext" :title="`también en ${f}`">{{ f }}</span>
       <span v-if="photo.burst_n" class="ext burst" :title="`ráfaga de ${photo.burst_n}`">
         ⧉{{ photo.burst_n }}
       </span>

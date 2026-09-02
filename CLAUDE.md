@@ -65,6 +65,13 @@ indexa como carpeta `config.ROOT_FOLDER` ('.') y se muestra por su basename
 (`display_name`); al re-escanear carpetas SIEMPRE pasar el nombre del
 catálogo a `_scan_folder(con, dir, name)`.
 
+Una foto = un nombre base (regla de Diego): el catálogo guarda una fila por
+archivo, pero /api/photos agrupa por stem (`_group_versions`): el archivo
+principal (RAW > TIFF > PNG > JPG, `formats.rank`) da id/preview/revelado y
+el resto son `files`/`formats`. Contadores por stems distintos; métricas solo
+sobre la principal; descartar (1★ → papelera) manda TODAS las versiones y
+sidecars (`trash.trash_stem`). Cerrar carpeta sigue borrando solo el RAW.
+
 ## Reglas de oro
 
 - Fuente de verdad = archivos + sidecars `.xmp` (compatibles con Lightroom);

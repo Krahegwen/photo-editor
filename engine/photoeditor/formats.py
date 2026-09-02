@@ -25,3 +25,15 @@ IMAGE_EXTS = RAW_EXTS | FLAT_EXTS
 
 def is_raw(ext: str) -> bool:
     return ext.lower() in RAW_EXTS
+
+
+# Una foto = un nombre base; sus archivos son versiones. La "principal" (la que
+# se previsualiza, revela y mide) es el RAW si lo hay, luego TIFF, PNG, JPG.
+_RANK = {".tif": 1, ".tiff": 1, ".png": 2, ".jpg": 3, ".jpeg": 3}
+
+
+def rank(ext: str) -> int:
+    e = ext.lower()
+    if e in RAW_EXTS:
+        return 0
+    return _RANK.get(e, 4)

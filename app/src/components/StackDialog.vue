@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { api } from '../api'
+import { isRaw } from '../formats'
 import type { Photo } from '../types'
 
 const props = defineProps<{ photos: Photo[]; folderName: string }>()
@@ -22,7 +23,7 @@ const LABELS: Record<string, string> = {
 }
 
 const arws = computed(() => {
-  const a = props.photos.filter((p) => p.ext === '.arw')
+  const a = props.photos.filter((p) => isRaw(p.ext))
   return a.length ? a : props.photos
 })
 

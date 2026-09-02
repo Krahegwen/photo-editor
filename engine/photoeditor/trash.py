@@ -22,6 +22,28 @@ def audit(action: str, items: list[str]) -> None:
         fh.write(line + "\n")
 
 
+def trash_stem(con, root: Path, folder_id: int, folder: str, stem: str) -> list[str]:
+    """Papelera para la foto ENTERA: todas sus versiones (RAW, JPG, TIF…) y
+    sus sidecars. Es lo que significa descartar una foto en la rejilla."""
+    trashed: list[str] = []
+    rows = con.execute(
+        "SELECT id, ext FROM photos WHERE folder_id=? AND stem=?", (folder_id, stem)
+    ).fetchall()
+    for r in rows:
+        f = root / folder / (stem + r["ext"])
+        if f.exists():
+            send2trash(str(f))
+        trashed.append(f"{folder}/{stem}{r['ext']}")
+        con.execute("DELETE FROM photos WHERE id=?", (r["id"],))
+    for suffix in (".xmp", ".pe.json"):
+        sc = root / folder / (stem + suffix)
+        if sc.exists():
+            send2trash(str(sc))
+            trashed.append(f"{folder}/{sc.name}")
+    con.commit()
+    return trashed
+
+
 def trash_photo(con, root: Path, row) -> list[str]:
     """Papelera para el archivo de la foto y, si nadie más comparte el stem,
     sus sidecars .xmp y .pe.json. Borra la fila y devuelve lo enviado."""

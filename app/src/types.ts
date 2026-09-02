@@ -45,6 +45,9 @@ export interface Photo {
   burst_n: number | null
   best_of_burst: boolean
   has_recipe: boolean
+  /** versiones de la misma foto (RAW, JPG, TIF…); la primera es la principal */
+  files: { id: number; ext: string; bytes: number }[]
+  formats: string[]
 }
 
 export interface JobProgress {

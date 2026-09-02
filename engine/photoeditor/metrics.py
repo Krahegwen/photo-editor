@@ -11,7 +11,7 @@ import time
 import cv2
 import numpy as np
 
-from . import config, db, previews
+from . import config, db, formats, previews
 
 
 def _measure(preview_path) -> dict | None:
@@ -36,12 +36,19 @@ def job_fn(folder_id: int):
         con = db.connect()
         try:
             root = config.get_root()
-            rows = con.execute(
-                """SELECT p.id, p.stem, p.ext, p.mtime, f.name AS folder FROM photos p
-                   JOIN folders f ON f.id = p.folder_id
-                   WHERE p.folder_id=? AND p.metrics_at IS NULL""",
+            allrows = con.execute(
+                """SELECT p.id, p.stem, p.ext, p.mtime, p.metrics_at, f.name AS folder
+                   FROM photos p JOIN folders f ON f.id = p.folder_id
+                   WHERE p.folder_id=?""",
                 (folder_id,),
             ).fetchall()
+            # una foto = un stem: se mide solo la versión principal (RAW > TIFF > JPG)
+            primary: dict[str, object] = {}
+            for r in allrows:
+                cur = primary.get(r["stem"])
+                if cur is None or formats.rank(r["ext"]) < formats.rank(cur["ext"]):
+                    primary[r["stem"]] = r
+            rows = [r for r in primary.values() if r["metrics_at"] is None]
             job["progress"]["total"] = len(rows)
             for r in rows:
                 job["progress"]["current"] = r["stem"]

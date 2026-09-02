@@ -100,7 +100,7 @@ def _scan_folder(con, folder: Path, name: str | None = None) -> None:
                 "UPDATE photos SET rating=? WHERE folder_id=? AND stem=?", (r, fid, sc.stem)
             )
     con.execute(
-        "UPDATE folders SET photo_count=(SELECT COUNT(*) FROM photos WHERE folder_id=?),"
+        "UPDATE folders SET photo_count=(SELECT COUNT(DISTINCT stem) FROM photos WHERE folder_id=?),"
         " last_scan=? WHERE id=?",
         (fid, time.time(), fid),
     )

@@ -38,6 +38,7 @@ from . import (
     xmp,
 )
 from .formats import is_raw
+from .formats import rank as formats_rank
 
 
 def _warmup_gpu() -> None:
@@ -268,7 +269,9 @@ def health():
     con = db.connect()
     try:
         folders = con.execute("SELECT COUNT(*) FROM folders").fetchone()[0]
-        photos = con.execute("SELECT COUNT(*) FROM photos").fetchone()[0]
+        photos = con.execute(
+            "SELECT COUNT(*) FROM (SELECT DISTINCT folder_id, stem FROM photos)"
+        ).fetchone()[0]
     finally:
         con.close()
     return {
@@ -452,9 +455,32 @@ def list_photos(folder_id: int):
                     r["has_recipe"] = (fdir / f"{r['stem']}.pe.json").exists()
         except RuntimeError:
             pass
-        return _annotate(rows)
+        return _annotate(_group_versions(rows))
     finally:
         con.close()
+
+
+def _group_versions(rows: list[dict]) -> list[dict]:
+    """Una foto por nombre base: el archivo principal (RAW > TIFF > PNG > JPG)
+    da el id, la preview y el revelado; el resto son versiones (`files`)."""
+    groups: dict[str, list[dict]] = {}
+    for r in rows:
+        groups.setdefault(r["stem"], []).append(r)
+    photos: list[dict] = []
+    for files in groups.values():
+        files.sort(key=lambda f: (formats_rank(f["ext"]), f["ext"]))
+        p = dict(files[0])
+        if p["metrics_at"] is None:  # métricas de otra versión ya medida, si las hay
+            measured = next((f for f in files if f["metrics_at"] is not None), None)
+            if measured is not None:
+                for k in ("sharp", "clip_hi", "clip_lo", "bright", "metrics_at"):
+                    p[k] = measured[k]
+        p["rating"] = next((f["rating"] for f in files if f["rating"] is not None), None)
+        p["has_recipe"] = any(f["has_recipe"] for f in files)
+        p["files"] = [{"id": f["id"], "ext": f["ext"], "bytes": f["bytes"]} for f in files]
+        p["formats"] = [f["ext"][1:].upper() for f in files]
+        photos.append(p)
+    return photos
 
 
 def _photo_row(con, photo_id: int):
@@ -611,6 +637,7 @@ def delete_photos(req: DeleteRequest):
     con = db.connect()
     trashed, errors = [], []
     touched: set[int] = set()
+    done: set[tuple[int, str]] = set()
     try:
         for pid in req.photo_ids:
             try:
@@ -618,15 +645,20 @@ def delete_photos(req: DeleteRequest):
             except HTTPException:
                 errors.append(f"id {pid}: no está en el catálogo")
                 continue
+            key = (row["folder_id"], row["stem"])
+            if key in done:
+                continue
+            done.add(key)
             try:
-                trashed += trash.trash_photo(con, root, row)
+                # la foto entera: todas sus versiones (RAW, JPG, TIF…) y sidecars
+                trashed += trash.trash_stem(con, root, row["folder_id"], row["folder"], row["stem"])
                 touched.add(row["folder_id"])
             except Exception as exc:
-                errors.append(f"{row['folder']}/{row['stem']}{row['ext']}: {exc}")
+                errors.append(f"{row['folder']}/{row['stem']}: {exc}")
         for fid in touched:
             con.execute(
                 "UPDATE folders SET photo_count="
-                "(SELECT COUNT(*) FROM photos WHERE folder_id=?) WHERE id=?",
+                "(SELECT COUNT(DISTINCT stem) FROM photos WHERE folder_id=?) WHERE id=?",
                 (fid, fid),
             )
         con.commit()

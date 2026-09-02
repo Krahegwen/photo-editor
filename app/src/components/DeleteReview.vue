@@ -10,7 +10,7 @@ const busy = ref(false)
 const error = ref<string | null>(null)
 
 const totalMb = computed(() =>
-  (props.photos.reduce((a, p) => a + p.bytes, 0) / 1e6).toFixed(0),
+  (props.photos.reduce((a, p) => a + (p.files ?? [{ bytes: p.bytes }]).reduce((b, f) => b + f.bytes, 0), 0) / 1e6).toFixed(0),
 )
 
 async function send() {
