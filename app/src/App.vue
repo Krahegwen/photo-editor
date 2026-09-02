@@ -12,12 +12,6 @@ import type { FilterKey, Folder, Health, Job, Photo, PresetKey, Recipe } from '.
 
 // ------------------------------------------------------------- carpeta de fotos (raíz)
 
-const rootOpen = ref(false)
-// sin raíz configurada (primer arranque, o la carpeta ya no existe): pedirla
-watch(health, (h) => {
-  if (h && !h.ok) rootOpen.value = true
-})
-
 async function onRootSaved(info: { root: string | null; aviso?: string }) {
   rootOpen.value = false
   notice.value = info.aviso ?? `Carpeta de fotos: ${info.root} — escaneando…`
@@ -62,6 +56,11 @@ const loupeIdx = ref(0)
 const deleteOpen = ref(false)
 const closeOpen = ref(false)
 const stackOpen = ref(false)
+const rootOpen = ref(false)
+// sin raíz configurada (primer arranque, o la carpeta ya no existe): pedirla
+watch(health, (h) => {
+  if (h && !h.ok) rootOpen.value = true
+})
 const gridEl = ref<HTMLElement | null>(null)
 const loupeRef = ref<InstanceType<typeof Loupe> | null>(null)
 
