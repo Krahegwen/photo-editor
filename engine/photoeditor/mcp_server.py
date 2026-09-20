@@ -2,7 +2,9 @@
 
 Cliente fino sobre la API REST del motor local (PHOTOED_URL, por defecto
 127.0.0.1:8177): las mismas operaciones que usa la UI, sin duplicar lógica.
-El motor debe estar arrancado (launcher/photo-editor.ps1).
+Si el motor no responde, el MCP lo arranca (tarea programada
+photo-editor-engine si existe, y si no un proceso suelto): ver _start_engine y
+el apartado "Arranque y datos" de CLAUDE.md.
 
 Las fotos se refieren por sus 4 dígitos ("8881") o por el stem completo
 ("_DSC8881"); las carpetas por nombre exacto o subcadena única ("eclipse").
