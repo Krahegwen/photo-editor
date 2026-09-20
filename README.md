@@ -62,9 +62,19 @@ compartida entre la UI y el MCP.
 
 ## Desarrollo
 
-```bash
-cd engine && uv sync && uv run python -m photoeditor   # API en :8177
-cd app && corepack pnpm install && corepack pnpm dev   # UI en :5173
+Un comando por línea: la shell de esta máquina es PowerShell 5.1 y `&&` es un
+error de sintaxis.
+
+```
+cd engine
+python -m uv sync            # o `uv sync` si uv está en el PATH
+python -m uv run python -m photoeditor   # API en :8177
+```
+
+```
+cd app
+corepack pnpm install
+corepack pnpm dev            # UI en :5173
 ```
 
 ## Rendimiento: CPU por defecto, GPU opcional
@@ -100,7 +110,7 @@ autenticación). Para usarlo desde el móvil en la misma WiFi:
 
 ## Uso normal
 
-```bash
+```
 corepack pnpm -C app build
-powershell launcher/photo-editor.ps1
+powershell launcher\photo-editor.ps1
 ```
