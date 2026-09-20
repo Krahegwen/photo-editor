@@ -2,7 +2,7 @@
 
 Editor fotográfico local para sustituir Lightroom/Photoshop en mi flujo real:
 cribar, puntuar, revelar RAW (Sony ARW), apilar astro y exportar — con API REST
-y, más adelante, servidor MCP para que Claude opere el mismo motor.
+y servidor MCP para que Claude opere el mismo motor.
 
 **Estado: F0–F4 completadas** — catálogo, cribado (rating XMP, métricas de
 nitidez, borrado a papelera), revelado no destructivo con exportación por
