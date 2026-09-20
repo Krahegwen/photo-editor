@@ -53,9 +53,10 @@ defecto `127.0.0.1:8177`). Config para Claude Desktop:
 }
 ```
 
-Tools: estado, listar_carpetas, listar_fotos, ver_foto, hoja_contactos,
-puntuar, sugerir_descartes, borrar_fotos (dry-run salvo confirmado), receta,
-aplicar_receta, exportar, cerrar_carpeta (dry-run salvo ejecutar), escanear,
+Las 20 tools: estado, raiz, listar_carpetas, listar_fotos, ver_foto,
+hoja_contactos, puntuar, sugerir_descartes, borrar_fotos (dry-run salvo
+confirmado), receta, aplicar_receta, exportar, apilar, timelapse, etiquetar,
+galeria, renombrar_carpeta, cerrar_carpeta (dry-run salvo ejecutar), escanear,
 estado_trabajo. Los trabajos largos van a una cola secuencial (`/api/jobs`)
 compartida entre la UI y el MCP.
 
