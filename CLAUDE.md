@@ -140,6 +140,9 @@ Reglas:
   detección DoG y la parte tonal del revelado (geometría sigue en cv2/CPU).
   Todo cae a CPU ante cualquier error; PHOTOED_GPU=0 la apaga. El repo es
   público: el camino CPU es el de referencia y debe seguir funcionando.
+- GOTCHA CuPy: `cupy.select` solo admite un **escalar** en `default` (numpy
+  acepta arrays). Es el tipo de diferencia que revienta solo en el camino GPU,
+  que es el que no se prueba por defecto.
 - Timelapse usa h264_nvenc si el ffmpeg lo trae y funciona; si no, libx264.
 - /api/health informa de gpu, threads y lan (host, urls para el móvil).
 - Red local: host por PHOTOED_HOST o "host" en config.json (Diego: 0.0.0.0);
