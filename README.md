@@ -4,10 +4,12 @@ Editor fotográfico local para sustituir Lightroom/Photoshop en mi flujo real:
 cribar, puntuar, revelar RAW (Sony ARW), apilar astro y exportar — con API REST
 y servidor MCP para que Claude opere el mismo motor.
 
-**Estado: F0–F4 completadas** — catálogo, cribado (rating XMP, métricas de
-nitidez, borrado a papelera), revelado no destructivo con exportación por
-presets, cola de trabajos, servidor MCP y apilador astro (luna, estrellas,
-media sigma-clip, máximo para trails/fuegos, HDR Mertens).
+**Estado: F0–F5 (dos tandas) completadas** — catálogo, cribado (rating XMP,
+métricas de nitidez, borrado a papelera), revelado no destructivo con curvas y
+exportación por presets, cola de trabajos, servidor MCP, apilador astro (luna,
+estrellas, media sigma-clip, máximo para fuegos, `trails` con relleno de huecos,
+HDR Mertens), mejor de ráfaga, timelapse, keywords, galería estática y
+renombrado de carpetas. De F5 quedan, según uso: Tunnel, lensfun y dark frames.
 
 ## Arquitectura
 
