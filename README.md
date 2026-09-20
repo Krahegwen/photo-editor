@@ -2,12 +2,14 @@
 
 Editor fotográfico local para sustituir Lightroom/Photoshop en mi flujo real:
 cribar, puntuar, revelar RAW (Sony ARW), apilar astro y exportar — con API REST
-y, más adelante, servidor MCP para que Claude opere el mismo motor.
+y servidor MCP para que Claude opere el mismo motor.
 
-**Estado: F0–F4 completadas** — catálogo, cribado (rating XMP, métricas de
-nitidez, borrado a papelera), revelado no destructivo con exportación por
-presets, cola de trabajos, servidor MCP y apilador astro (luna, estrellas,
-media sigma-clip, máximo para trails/fuegos, HDR Mertens).
+**Estado: F0–F5 (dos tandas) completadas** — catálogo, cribado (rating XMP,
+métricas de nitidez, borrado a papelera), revelado no destructivo con curvas y
+exportación por presets, cola de trabajos, servidor MCP, apilador astro (luna,
+estrellas, media sigma-clip, máximo para fuegos, `trails` con relleno de huecos,
+HDR Mertens), mejor de ráfaga, timelapse, keywords, galería estática y
+renombrado de carpetas. De F5 quedan, según uso: Tunnel, lensfun y dark frames.
 
 ## Arquitectura
 
@@ -51,17 +53,28 @@ defecto `127.0.0.1:8177`). Config para Claude Desktop:
 }
 ```
 
-Tools: estado, listar_carpetas, listar_fotos, ver_foto, hoja_contactos,
-puntuar, sugerir_descartes, borrar_fotos (dry-run salvo confirmado), receta,
-aplicar_receta, exportar, cerrar_carpeta (dry-run salvo ejecutar), escanear,
+Las 20 tools: estado, raiz, listar_carpetas, listar_fotos, ver_foto,
+hoja_contactos, puntuar, sugerir_descartes, borrar_fotos (dry-run salvo
+confirmado), receta, aplicar_receta, exportar, apilar, timelapse, etiquetar,
+galeria, renombrar_carpeta, cerrar_carpeta (dry-run salvo ejecutar), escanear,
 estado_trabajo. Los trabajos largos van a una cola secuencial (`/api/jobs`)
 compartida entre la UI y el MCP.
 
 ## Desarrollo
 
-```bash
-cd engine && uv sync && uv run python -m photoeditor   # API en :8177
-cd app && corepack pnpm install && corepack pnpm dev   # UI en :5173
+Un comando por línea: la shell de esta máquina es PowerShell 5.1 y `&&` es un
+error de sintaxis.
+
+```
+cd engine
+python -m uv sync            # o `uv sync` si uv está en el PATH
+python -m uv run python -m photoeditor   # API en :8177
+```
+
+```
+cd app
+corepack pnpm install
+corepack pnpm dev            # UI en :5173
 ```
 
 ## Rendimiento: CPU por defecto, GPU opcional
@@ -97,7 +110,7 @@ autenticación). Para usarlo desde el móvil en la misma WiFi:
 
 ## Uso normal
 
-```bash
+```
 corepack pnpm -C app build
-powershell launcher/photo-editor.ps1
+powershell launcher\photo-editor.ps1
 ```
