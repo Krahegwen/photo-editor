@@ -32,7 +32,9 @@ media; reencuadres: pasada directa de recuperación y segmentación automática
 (16b LZW) + .jpg; el acabado (viejo finish.py) se hace en Revelar.
 
 Formatos: `formats.py` centraliza RAW_EXTS (arw, dng, rw2, cr2/cr3, nef, raf,
-orf, pef, srw…) — probado con los samples DNG/RW2 de `260901- SAMPLE`. Ojo:
+orf, pef, srw…) — probado con los samples DNG/RW2 de la carpeta de pruebas
+(`000000 - SAMPLE TEST`; se llamó `260901- SAMPLE` hasta que Diego la renombró
+para que quedara al final del orden descendente). Ojo:
 CR3 puede venir sin EXIF vía exifread (contenedor ISO-BMFF).
 
 Notas F3: cola secuencial en `jobs.py` (registro en memoria, /api/jobs);
