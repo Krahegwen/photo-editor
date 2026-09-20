@@ -89,14 +89,21 @@ mismo fichero: `fsutil file queryfileid <ruta>`.
 
 Reglas:
 
-1. **El motor de Diego se arranca con `launcher\engine-task.ps1`**, que registra
-   la tarea programada `photo-editor-engine` (`-AlIniciarSesion` para que
-   arranque al iniciar sesión, `-Quitar` para eliminarla). La tarea llama a
-   `photo-editor.ps1 -SoloMotor` y corre **fuera del contenedor**. Nunca
-   arrancarlo con Start-Process desde una sesión de Claude.
-   `mcp_server._start_engine` prefiere esa tarea y **cae a un proceso suelto si
-   no existe**: si no está registrada, el motor acaba dentro del contenedor sin
-   avisar. Comprobarlo con `schtasks /Query /TN photo-editor-engine`.
+1. **En este PC la tarea programada NO está registrada, y es a propósito**
+   (Diego, 2026-09-20: no quiere nada corriendo en la máquina que no vaya a usar
+   en ese momento; el arranque desacoplado es cosa del futuro home server).
+   `launcher\engine-task.ps1` sigue aquí para cuando haga falta: registra
+   `photo-editor-engine`, que llama a `photo-editor.ps1 -SoloMotor` y corre
+   **fuera del contenedor** (`-AlIniciarSesion` para que arranque al iniciar
+   sesión, `-Quitar` para eliminarla).
+   **La consecuencia hay que tenerla presente**: `mcp_server._start_engine`
+   prefiere esa tarea y, al no existir, **cae a lanzar el motor él mismo, dentro
+   del contenedor**, contra la copia virtualizada del catálogo. No avisa. Así
+   que antes de tocar nada por MCP: mirar `/api/health.app_dir` y, si el motor
+   lo acabas de arrancar tú, **asumir que el catálogo que ves puede no ser el de
+   Diego**. Lo limpio es que lo arranque él con el acceso directo del escritorio
+   y que la sesión encuentre el motor ya levantado.
+   Comprobar si existe: `schtasks /Query /TN photo-editor-engine`.
 2. **Para leer o escribir el directorio real desde dentro**, pasar por una tarea
    programada. `launcher\migrar-datos.ps1` es el ejemplo: copia
    virtualizado → real. El scratchpad y `%TEMP%` también están virtualizados, así
