@@ -56,7 +56,7 @@ su política de archivo; nunca sobreescribe sin force.
   Módulos en `photoeditor/`: `scan` (índice SQLite incremental), `previews`
   (JPEG incrustado del ARW + caché por tamaño), `xmp` (ratings en sidecars),
   `api` (REST; sirve `app/dist` si existe).
-- `app/` (Vue 3 + Vite; pnpm pineado por corepack): SPA en español; dev en
+- `app/` (Vue 3 + Vite; pnpm fijado en `packageManager`): SPA en español; dev en
   :5173 con proxy `/api`.
 - Datos generados en `%LOCALAPPDATA%\photo-editor\` (catalog.db, cache/,
   config.json con la raíz de fotos).
@@ -161,5 +161,6 @@ Reglas:
 
 - Engine: `uv sync` / `uv run python -m photoeditor` (desde `engine/`; en esta
   máquina uv se invoca como `python -m uv`).
-- App: `corepack pnpm install|dev|build` (desde `app/`).
+- App: `pnpm install|dev|build` (desde `app/`). Sin corepack: el pnpm del PATH,
+  9.7 o posterior, cambia solo a la versión que fija `packageManager`.
 - Verificación rápida: `GET http://127.0.0.1:8177/api/health`.

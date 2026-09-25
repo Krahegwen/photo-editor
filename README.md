@@ -71,10 +71,13 @@ python -m uv sync            # o `uv sync` si uv está en el PATH
 python -m uv run python -m photoeditor   # API en :8177
 ```
 
+La UI usa pnpm 9.7 o posterior, que cambia solo a la versión que fija
+`app/package.json`: no hace falta corepack.
+
 ```
 cd app
-corepack pnpm install
-corepack pnpm dev            # UI en :5173
+pnpm install
+pnpm dev                     # UI en :5173
 ```
 
 ## Rendimiento: CPU por defecto, GPU opcional
@@ -111,6 +114,6 @@ autenticación). Para usarlo desde el móvil en la misma WiFi:
 ## Uso normal
 
 ```
-corepack pnpm -C app build
+pnpm -C app build
 powershell launcher\photo-editor.ps1
 ```
